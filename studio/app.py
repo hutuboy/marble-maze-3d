@@ -9,6 +9,7 @@
 """
 import json
 import os
+import sys
 import threading
 import time
 import urllib.request
@@ -234,8 +235,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # 浏览器切页、请求超时、前端 AbortController 到点都会让连接提前断开，
+        # 这种写入失败属于常态，不必每次打印整段 traceback 刷屏。
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    Server(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
