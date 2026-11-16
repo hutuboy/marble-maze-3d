@@ -1,0 +1,782 @@
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const EDGE = process.env.EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+const PORT = 5199;
+const CDP = 9333;
+const profile = path.join(os.tmpdir(), 'marble-maze-cdp-profile');
+
+const server = spawn(process.execPath, ['serve.mjs'], {
+  cwd: root,
+  env: { ...process.env, PORT: String(PORT) },
+  stdio: 'ignore'
+});
+
+let edge = null;
+let ws = null;
+const errors = [];
+let passed = 0;
+let failed = 0;
+
+const check = (label, ok, detail = '') => {
+  if (ok) { passed += 1; console.log(`  PASS  ${label}${detail ? '  (' + detail + ')' : ''}`); }
+  else { failed += 1; console.log(`  FAIL  ${label}${detail ? '  (' + detail + ')' : ''}`); }
+};
+
+async function main() {
+  await sleep(500);
+  edge = spawn(EDGE, [
+    '--headless=new', '--no-first-run', '--no-default-browser-check',
+    '--disable-gpu-sandbox', '--use-gl=angle', '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader', '--hide-scrollbars',
+    `--remote-debugging-port=${CDP}`, `--user-data-dir=${profile}`,
+    '--window-size=1440,900', `http://127.0.0.1:${PORT}/`
+  ], { stdio: 'ignore' });
+
+  let target = null;
+  for (let i = 0; i < 60 && !target; i++) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${CDP}/json/list`)).json();
+      target = list.find((t) => t.type === 'page' && t.url.includes(String(PORT)));
+    } catch { /* 尚未就绪 */ }
+    if (!target) await sleep(250);
+  }
+  if (!target) throw new Error('无法连接浏览器调试端口');
+
+  ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+
+  let seq = 0;
+  const pending = new Map();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.id && pending.has(msg.id)) {
+      const p = pending.get(msg.id);
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
+      else p.resolve(msg.result);
+    } else if (msg.method === 'Runtime.exceptionThrown') {
+      const d = msg.params.exceptionDetails;
+      errors.push(`异常: ${d.text} ${d.exception?.description || ''}`);
+    } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
+      errors.push(`控制台: ${msg.params.args.map((a) => a.value ?? a.description ?? '').join(' ')}`);
+    } else if (msg.method === 'Network.responseReceived' && msg.params.response.status >= 400) {
+      errors.push(`HTTP ${msg.params.response.status}: ${msg.params.response.url}`);
+    } else if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
+      errors.push(`日志: ${msg.params.entry.text}`);
+    }
+  };
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const id = ++seq;
+    pending.set(id, { resolve, reject });
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+
+  const evalJS = async (expression) => {
+    const r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (r.exceptionDetails) throw new Error(r.exceptionDetails.text + ' ' + (r.exceptionDetails.exception?.description || ''));
+    return r.result.value;
+  };
+  const keyDown = (code, key, vk) => send('Input.dispatchKeyEvent', {
+    type: 'keyDown', key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk
+  });
+  const keyUp = (code, key, vk) => send('Input.dispatchKeyEvent', {
+    type: 'keyUp', key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk
+  });
+  const tap = async (code, key, vk) => { await keyDown(code, key, vk); await keyUp(code, key, vk); };
+  const shot = async (name) => {
+    const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    writeFileSync(path.join(root, 'tests', name), Buffer.from(r.data, 'base64'));
+  };
+  const ensurePlaying = async () => {
+    const st = await evalJS('window.__marbleMaze.game.state');
+    if (st === 'paused') {
+      await evalJS('window.__marbleMaze.game.resume()');
+      await sleep(120);
+    }
+    return await evalJS('window.__marbleMaze.game.state');
+  };
+  const waitFor = async (expression, timeoutMs = 4000, autoResume = true) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      if (autoResume) {
+        const st = await evalJS('window.__marbleMaze.game.state');
+        if (st === 'paused') await evalJS('window.__marbleMaze.game.resume()');
+      }
+      if (await evalJS(expression)) return true;
+      await sleep(120);
+    }
+    return Boolean(await evalJS(expression));
+  };
+
+  await send('Runtime.enable');
+  await send('Log.enable');
+  await send('Network.enable');
+  await send('Page.enable');
+  // 每次导航前清掉上一轮残留的成绩，保证选关/解锁断言可复现。
+  await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `try { localStorage.removeItem('marble-maze-3d.records.v1'); } catch (_) {}`
+  });
+  await send('Page.reload', { ignoreCache: true });
+  await sleep(2600);
+
+  console.log('3D 弹珠迷宫 · 浏览器运行验证\n');
+
+  const init = await evalJS(`(() => {
+    const c = document.getElementById('scene');
+    const g = window.__marbleMaze && window.__marbleMaze.game;
+    return {
+      hook: !!window.__marbleMaze,
+      state: g && g.state,
+      level: g && g.levelIndex,
+      walls: g && g.level.walls.length,
+      canvasW: c.width, canvasH: c.height,
+      cssW: c.clientWidth, cssH: c.clientHeight,
+      webgl2: !!c.getContext('webgl2'),
+      modal: document.getElementById('modal').innerText.slice(0, 40),
+      hudLevel: document.getElementById('statLevel').innerText,
+      hudLives: document.getElementById('statLives').innerText,
+      hudScore: document.getElementById('statScore').innerText,
+      hudReward: document.getElementById('statReward').innerText,
+      hudTimeLabel: document.getElementById('statTimeLabel').innerText,
+      ballShell: !!(window.__marbleMaze && window.__marbleMaze.view.ballShell),
+      ballMarker: !!(window.__marbleMaze && window.__marbleMaze.view.ballMarker),
+      levelCards: document.querySelectorAll('#modal [data-action="level"]').length,
+      unlockedCards: document.querySelectorAll('#modal [data-action="level"]:not(:disabled)').length,
+      hudCheckpoints: document.getElementById('statCheckpoints').textContent,
+      motionBtn: document.getElementById('btnTilt').textContent,
+      hasMapToggle: !!document.getElementById('mapToggle'),
+      hasFlash: !!document.getElementById('levelFlash'),
+      persistent: window.__marbleMaze.game.records.persistent,
+      qualityBtn: document.getElementById('btnQuality').textContent,
+      qualityMode: window.__marbleMaze.quality.mode,
+      qualityLevel: window.__marbleMaze.quality.level,
+      qualityStats: window.__marbleMaze.view.stats(),
+      staticDraws: window.__marbleMaze.ui.staticDraws,
+      mmSize: document.getElementById('minimap').width,
+      goalBeam: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeam),
+      goalBeacon: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeacon),
+      goalToneMapped: window.__marbleMaze && window.__marbleMaze.view.mat.goalBeam.toneMapped,
+      modalScroll: document.getElementById('modal').scrollHeight,
+      modalClient: document.getElementById('modal').clientHeight,
+      startBtnVisible: (() => {
+        const b = document.querySelector('#modal [data-action="start"]');
+        const m = document.getElementById('modal');
+        return !!b && b.getBoundingClientRect().bottom <= m.getBoundingClientRect().bottom + 1;
+      })()
+    };
+  })()`);
+
+  check('页面脚本完成初始化', init.hook === true, `状态 ${init.state}`);
+  check('WebGL 上下文创建成功', init.webgl2 === true);
+  check('画布按窗口尺寸自适应', init.canvasW > 800 && init.canvasH > 500,
+    `${init.canvasW}x${init.canvasH} / CSS ${init.cssW}x${init.cssH}`);
+  check('初始为菜单状态且关卡 1 已构建', init.state === 'menu' && init.level === 0 && init.walls > 0,
+    `${init.walls} 段墙`);
+  check('开始界面有内容', init.modal.includes('3D 弹珠迷宫'), init.modal.trim());
+  check('HUD 初始值正确', init.hudLevel === '1 / 3' && init.hudLives.includes('♥'), `${init.hudLevel} / ${init.hudLives}`);
+  check('开局总分为 0，预估奖励独立显示', init.hudScore === '0' && init.hudReward.includes('本关'),
+    `总分 ${init.hudScore} / ${init.hudReward}`);
+  check('无限时关标签为「计时」', init.hudTimeLabel === '计时', init.hudTimeLabel);
+  check('弹珠轮廓壳与落点环已启用', init.ballShell && init.ballMarker);
+  check('终点金色光柱与信标就位且不被色调映射压灰',
+    init.goalBeam && init.goalBeacon && init.goalToneMapped === false,
+    `光柱 ${init.goalBeam} / 信标 ${init.goalBeacon} / toneMapped ${init.goalToneMapped}`);
+  check('第 1 关小地图逻辑分辨率为 220px', init.mmSize === 220, `${init.mmSize}px`);
+  check('菜单提供 3 个选关卡片且初始仅第 1 关解锁',
+    init.levelCards === 3 && init.unlockedCards === 1,
+    `${init.levelCards} 张卡 / ${init.unlockedCards} 张可选`);
+  check('HUD 增加检查点统计', /^0 \/ \d+$/.test(init.hudCheckpoints.trim()), init.hudCheckpoints);
+  check('体感按钮、窄屏地图开关与切关过渡层就位',
+    init.motionBtn === '体感 关' && init.hasMapToggle && init.hasFlash);
+  check('HTTP 模式下成绩存储可持久化', init.persistent === true);
+  check('画质按钮与视图档位接口就位',
+    init.qualityBtn === '画质 自动' && init.qualityMode === 'auto'
+    && ['high', 'medium', 'low'].includes(init.qualityLevel)
+    && init.qualityStats.pixelRatioCap > 0,
+    `${init.qualityBtn} / ${init.qualityLevel} / cap ${init.qualityStats.pixelRatioCap}`);
+  check('菜单内容完整可见，开始按钮无需滚动',
+    init.modalScroll <= init.modalClient + 2 && init.startBtnVisible,
+    `内容 ${init.modalScroll}px / 可视 ${init.modalClient}px / 按钮可见 ${init.startBtnVisible}`);
+  // 无头 swiftshader 帧率偏低会触发自动降级，固定高档保证取证截图一致。
+  await evalJS(`window.__marbleMaze.quality.setMode('high')`);
+  await shot('shot-menu.png');
+
+  const cacheProbe = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    const before = h.ui.staticDraws;
+    for (let i = 0; i < 20; i++) h.ui.drawMinimap(h.game.level, h.game.marble, h.game.elapsed);
+    const steady = h.ui.staticDraws;
+    const sizeL1 = h.ui.mmBase.width;
+    h.game.loadLevel(1);
+    h.ui.drawMinimap(h.game.level, h.game.marble, h.game.elapsed);
+    const sizeL2 = h.ui.mmBase.width;
+    h.game.loadLevel(2);
+    h.ui.drawMinimap(h.game.level, h.game.marble, h.game.elapsed);
+    const sizeL3 = h.ui.mmBase.width;
+    h.game.loadLevel(0);
+    h.ui.drawMinimap(h.game.level, h.game.marble, h.game.elapsed);
+    return {
+      before, steady, afterSwitch: h.ui.staticDraws,
+      base: !!h.ui.mmBase, walls: !!h.ui.mmWalls,
+      sizeL1, sizeL2, sizeL3
+    };
+  })()`);
+  check('小地图静态层只烘焙一次，连续 20 帧不重绘墙体',
+    cacheProbe.base && cacheProbe.walls && cacheProbe.steady === cacheProbe.before,
+    `烘焙 ${cacheProbe.before} → ${cacheProbe.steady} 次`);
+  check('小地图逻辑分辨率随关卡尺寸递增',
+    cacheProbe.sizeL1 === 220 && cacheProbe.sizeL2 > cacheProbe.sizeL1
+    && cacheProbe.sizeL3 > cacheProbe.sizeL2 && cacheProbe.sizeL3 <= 320,
+    `L1/L2/L3 ${cacheProbe.sizeL1} / ${cacheProbe.sizeL2} / ${cacheProbe.sizeL3}px`);
+  check('切关时静态层按 level 引用与尺寸失效并重建',
+    cacheProbe.afterSwitch === cacheProbe.steady + 3,
+    `${cacheProbe.steady} → ${cacheProbe.afterSwitch}`);
+
+  await ensurePlaying();
+  if ((await evalJS('window.__marbleMaze.game.state')) === 'menu') await tap('Enter', 'Enter', 13);
+  await waitFor(`window.__marbleMaze.game.state === 'playing'`, 2500);
+  const started = await evalJS(`({state: window.__marbleMaze.game.state, overlay: document.getElementById('overlay').className, x: window.__marbleMaze.game.marble.x})`);
+  check('Enter 开始游戏', started.state === 'playing' && !started.overlay.includes('visible'));
+
+  await ensurePlaying();
+  const x0 = await evalJS('window.__marbleMaze.game.marble.x');
+  await keyDown('ArrowRight', 'ArrowRight', 39);
+  const rolled = await waitFor(`(window.__marbleMaze.game.marble.x > ${x0} + 0.08 && window.__marbleMaze.game.marble.vx > 0)`, 4000);
+  const moved = await evalJS(`({x: window.__marbleMaze.game.marble.x, z: window.__marbleMaze.game.marble.z, vx: window.__marbleMaze.game.marble.vx, time: window.__marbleMaze.game.elapsed, status: document.getElementById('statusPill').innerText})`);
+  await keyUp('ArrowRight', 'ArrowRight', 39);
+  check('方向键驱动弹珠滚动', rolled && moved.x > x0 + 0.08 && moved.vx > 0,
+    `x ${x0.toFixed(2)} -> ${moved.x.toFixed(2)}, vx ${moved.vx.toFixed(2)}`);
+  const tiltGuide = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const first = g.records.hintSeen('tilt');
+    const text = document.getElementById('toast').textContent;
+    const again = g.hintOnce('tilt', '不应再弹');
+    return { first, text, again };
+  })()`);
+  check('首次倾斜提示松手回正且只弹一次',
+    tiltGuide.first && tiltGuide.text.includes('回正') && tiltGuide.again === false,
+    `已记录 ${tiltGuide.first} / 提示「${tiltGuide.text}」/ 二次 ${tiltGuide.again}`);
+  check('计时器在推进', moved.time > 0.2, `${moved.time.toFixed(2)}s`);
+  check('状态提示同步', moved.status === '游戏中', moved.status);
+  const scoreDuring = await evalJS(`document.getElementById('statScore').innerText`);
+  check('游玩中总分不被预估奖励污染', scoreDuring === '0', `总分 ${scoreDuring}`);
+  const fx = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    h.ui.shake();
+    return {
+      trail: h.ui.trail.length,
+      shake: document.getElementById('app').classList.contains('shake'),
+      flash: document.getElementById('levelFlash').classList.contains('play')
+    };
+  })()`);
+  check('小地图轨迹缓冲已启用', fx.trail >= 1, `${fx.trail} 个采样点`);
+  check('撞墙屏幕微震与切关淡入可触发', fx.shake && fx.flash,
+    `shake=${fx.shake} / flash=${fx.flash}`);
+  await shot('shot-playing.png');
+
+  await ensurePlaying();
+  await tap('KeyR', 'r', 82);
+  await keyDown('ArrowRight', 'ArrowRight', 39);
+  const fullOk = await waitFor(`(window.__marbleMaze.game.marble.targetZ < -0.20)`, 2500);
+  const fullTilt = await evalJS('Math.abs(window.__marbleMaze.game.marble.targetZ)');
+  await keyUp('ArrowRight', 'ArrowRight', 39);
+  await keyDown('ShiftLeft', 'Shift', 16);
+  await keyDown('ArrowRight', 'ArrowRight', 39);
+  const fineOk = await waitFor(`(Math.abs(window.__marbleMaze.game.marble.targetZ) < 0.13 && Math.abs(window.__marbleMaze.game.marble.targetZ) > 0.05)`, 2500);
+  const fineTilt = await evalJS('Math.abs(window.__marbleMaze.game.marble.targetZ)');
+  const fineHint = await evalJS(`document.getElementById('tiltHint').innerText`);
+  await keyUp('ArrowRight', 'ArrowRight', 39);
+  await keyUp('ShiftLeft', 'Shift', 16);
+  check('Shift 精细档把倾角减至 42%', fullOk && fineOk && fineTilt < fullTilt * 0.55,
+    `${fullTilt.toFixed(3)} -> ${fineTilt.toFixed(3)}`);
+  check('精细档有可见界面提示', fineHint.includes('精细模式'), fineHint);
+
+  await tap('KeyP', 'p', 80);
+  const pausedOk = await waitFor(`window.__marbleMaze.game.state === 'paused'`, 2000, false);
+  const paused = await evalJS(`({state: window.__marbleMaze.game.state, modal: document.getElementById('modal').innerText.slice(0, 20)})`);
+  check('P 键暂停并弹出提示', pausedOk && paused.state === 'paused' && paused.modal.includes('已暂停'), paused.modal.trim());
+  await tap('KeyP', 'p', 80);
+  const resumed = await waitFor(`window.__marbleMaze.game.state === 'playing'`, 2000, false);
+  check('P 键恢复', resumed);
+
+  await ensurePlaying();
+  await tap('KeyR', 'r', 82);
+  await sleep(250);
+  const restarted = await evalJS(`({x: window.__marbleMaze.game.marble.x, z: window.__marbleMaze.game.marble.z, time: window.__marbleMaze.game.elapsed, startX: window.__marbleMaze.game.level.start.x, startZ: window.__marbleMaze.game.level.start.z})`);
+  check('R 键重开本关并复位弹珠',
+    Math.abs(restarted.x - restarted.startX) < 0.2 && Math.abs(restarted.z - restarted.startZ) < 0.2 && restarted.time < 1.0,
+    `(${restarted.x.toFixed(2)}, ${restarted.z.toFixed(2)})`);
+
+  await ensurePlaying();
+  const clear = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.marble.x = g.level.goal.x;
+    g.marble.z = g.level.goal.z;
+    g.marble.vx = 0; g.marble.vz = 0;
+    return true;
+  })()`);
+  const clearedOk = await waitFor(`window.__marbleMaze.game.state === 'levelclear'`, 3500);
+  const cleared = await evalJS(`({
+    state: window.__marbleMaze.game.state,
+    modal: document.getElementById('modal').innerText.slice(0, 30),
+    score: window.__marbleMaze.game.score,
+    hudScore: document.getElementById('statScore').innerText,
+    hudReward: document.getElementById('statReward').innerText,
+    breakdown: document.querySelector('#modal .breakdown') ? document.querySelector('#modal .breakdown').innerText : '',
+    starBlocks: document.querySelectorAll('#modal .stars').length,
+    badge: document.querySelector('#modal .record-flag') ? document.querySelector('#modal .record-flag').innerText : '',
+    lastStars: window.__marbleMaze.game.lastStars,
+    unlocked: window.__marbleMaze.game.records.unlocked,
+    bestTime: window.__marbleMaze.game.records.best(1) ? window.__marbleMaze.game.records.best(1).time : -1,
+    stored: (() => { try { return !!localStorage.getItem('marble-maze-3d.records.v1'); } catch (_) { return false; } })()
+  })`);
+  check('抵达终点触发通关结算', clear && clearedOk && cleared.state === 'levelclear' && cleared.score > 0,
+    `${cleared.modal.trim()} / 得分 ${cleared.score}`);
+  check('通关后总分只累加一次', cleared.hudScore === String(cleared.score) && cleared.hudReward.includes('已结算'),
+    `总分 ${cleared.hudScore} / ${cleared.hudReward}`);
+  check('结算弹窗给出逐项分数明细',
+    ['基础分', '用时扣除', '碰撞扣除', '宝石奖励', '时间奖励'].every((k) => cleared.breakdown.includes(k)));
+  check('通关结算显示星级与首次通关记录',
+    cleared.starBlocks >= 1 && cleared.lastStars >= 1 && cleared.lastStars <= 3
+    && cleared.badge.includes('首次通关'),
+    `${cleared.lastStars} 星 / ${cleared.badge.trim()}`);
+  check('最佳成绩写入本地存储并解锁下一关',
+    cleared.stored && cleared.unlocked === 2 && cleared.bestTime > 0,
+    `解锁 ${cleared.unlocked} / 最佳 ${cleared.bestTime.toFixed(2)}s`);
+  await shot('shot-levelclear.png');
+
+  await tap('Enter', 'Enter', 13);
+  const nextOk = await waitFor(`(window.__marbleMaze.game.levelIndex === 1 && window.__marbleMaze.game.state === 'playing')`, 3500);
+  const next = await evalJS(`({
+    state: window.__marbleMaze.game.state,
+    level: window.__marbleMaze.game.levelIndex,
+    cols: window.__marbleMaze.game.level.cols,
+    holes: window.__marbleMaze.game.level.holes.length,
+    timeLabel: document.getElementById('statTimeLabel').innerText,
+    hudScore: document.getElementById('statScore').innerText
+  })`);
+  check('进入第 2 关且难度递增', nextOk && next.level === 1 && next.cols === 10 && next.holes === 4,
+    `${next.cols}x${next.cols}, ${next.holes} 个空洞`);
+  check('限时关标签改为「剩余」且总分延续', next.timeLabel === '剩余' && next.hudScore === String(cleared.score),
+    `${next.timeLabel} / 总分 ${next.hudScore}`);
+
+  await ensurePlaying();
+  const cpInfo = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const cp = g.level.checkpoints[0];
+    g.marble.x = cp.x; g.marble.z = cp.z;
+    g.marble.vx = 0; g.marble.vz = 0;
+    g.elapsed = 12.5; g.hits = 3; g.gemsGot = 1;
+    return { x: cp.x, z: cp.z, total: g.level.checkpoints.length };
+  })()`);
+  const cpOk = await waitFor(`window.__marbleMaze.game.level.checkpoints[0].active === true`, 2500);
+  const cpView = await evalJS(`({
+    active: window.__marbleMaze.game.level.checkpoints[0].active,
+    pillar: window.__marbleMaze.view.checkpointMeshes[0].pillar.visible,
+    hud: document.getElementById('statCheckpoints').innerText,
+    meshes: window.__marbleMaze.view.checkpointMeshes.length
+  })`);
+  check('经过检查点激活并同步 3D 光柱与 HUD',
+    cpOk && cpView.active && cpView.pillar && cpView.meshes === cpInfo.total
+    && cpView.hud.trim().startsWith('1'),
+    `${cpView.hud.trim()} / ${cpView.meshes} 个检查点`);
+  const cpGuide = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    return { seen: g.records.hintSeen('checkpoint'), again: g.hintOnce('checkpoint', '不该弹') };
+  })()`);
+  check('检查点机制讲解只弹一次', cpGuide.seen && cpGuide.again === false);
+
+  const fall = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const h = g.level.holes[0];
+    if (!h) return false;
+    g.marble.x = h.x; g.marble.z = h.z; g.marble.vx = 0; g.marble.vz = 0;
+    return true;
+  })()`);
+  const failedOk = await waitFor(`(window.__marbleMaze.game.state === 'failed' || window.__marbleMaze.game.state === 'gameover')`, 5500);
+  const failedState = await evalJS(`({state: window.__marbleMaze.game.state, lives: window.__marbleMaze.game.lives, modal: document.getElementById('modal').innerText.slice(0, 30)})`);
+  check('掉入空洞触发失败与扣生命', fall && failedOk && failedState.lives === 2,
+    `${failedState.modal.trim()} / 剩余 ${failedState.lives}`);
+
+  const failedUi = await evalJS(`({
+    actions: Array.from(document.querySelectorAll('#modal [data-action]')).map(b => b.dataset.action).join(','),
+    hudScore: document.getElementById('statScore').innerText,
+    hudReward: document.getElementById('statReward').innerText
+  })`);
+  check('失败弹窗按钮语义去重（重试 / 返回主菜单）', failedUi.actions === 'retry,menu', failedUi.actions);
+  check('失败不结算本关奖励、总分不跳变',
+    failedUi.hudScore === String(cleared.score) && failedUi.hudReward.includes('本关 +'),
+    `总分 ${failedUi.hudScore} / ${failedUi.hudReward}`);
+  const failedText = await evalJS(`document.getElementById('modal').innerText`);
+  check('已激活检查点时失败弹窗提示就地复活',
+    failedText.includes('从检查点复活') && failedText.includes('保留本关用时'));
+
+  await evalJS(`document.querySelector('#modal [data-action="retry"]').click()`);
+  const respOk = await waitFor(`window.__marbleMaze.game.state === 'playing'`, 2500, false);
+  const resp = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    return {
+      x: g.marble.x, z: g.marble.z, elapsed: g.elapsed, hits: g.hits,
+      gemsGot: g.gemsGot, lives: g.lives, cpActive: g.level.checkpoints[0].active
+    };
+  })()`);
+  check('失败后从检查点复活且保留本关用时 / 碰撞 / 宝石',
+    respOk && resp.cpActive && resp.lives === 2
+    && Math.abs(resp.x - cpInfo.x) < 0.35 && Math.abs(resp.z - cpInfo.z) < 0.35
+    && resp.elapsed >= 12.5 && resp.hits === 3 && resp.gemsGot === 1,
+    `位置 (${resp.x.toFixed(2)}, ${resp.z.toFixed(2)}) / 用时 ${resp.elapsed.toFixed(1)}s / 碰撞 ${resp.hits}`);
+
+  await tap('KeyR', 'r', 82);
+  await sleep(260);
+  const hardRestart = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    return {
+      cpActive: g.level.checkpoints[0].active,
+      x: g.marble.x, z: g.marble.z,
+      startX: g.level.start.x, startZ: g.level.start.z, elapsed: g.elapsed
+    };
+  })()`);
+  check('主动 R 重开回到起点并清空检查点',
+    !hardRestart.cpActive && hardRestart.elapsed < 1.0
+    && Math.abs(hardRestart.x - hardRestart.startX) < 0.2
+    && Math.abs(hardRestart.z - hardRestart.startZ) < 0.2,
+    `检查点 ${hardRestart.cpActive} / 用时 ${hardRestart.elapsed.toFixed(2)}s`);
+
+  await ensurePlaying();
+  await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const h = g.level.holes[0];
+    g.marble.x = h.x; g.marble.z = h.z; g.marble.vx = 0; g.marble.vz = 0;
+    return true;
+  })()`);
+  const failedTwice = await waitFor(
+    `(window.__marbleMaze.game.state === 'failed' || window.__marbleMaze.game.state === 'gameover')`, 5500);
+  check('二次失败仍进入失败流程', failedTwice);
+
+  await evalJS(`document.querySelector('#modal [data-action="menu"]').click()`);
+  const menuOk = await waitFor(`window.__marbleMaze.game.state === 'menu'`, 2500, false);
+  const backToMenu = await evalJS(`({state: window.__marbleMaze.game.state, level: window.__marbleMaze.game.levelIndex, score: window.__marbleMaze.game.score})`);
+  check('返回主菜单重置整局进度', menuOk && backToMenu.level === 0 && backToMenu.score === 0,
+    `第 ${backToMenu.level + 1} 关 / 总分 ${backToMenu.score}`);
+
+  const menuRec = await evalJS(`({
+    cards: document.querySelectorAll('#modal [data-action="level"]').length,
+    enabled: document.querySelectorAll('#modal [data-action="level"]:not(:disabled)').length,
+    best: document.querySelector('#modal .lc-best') ? document.querySelector('#modal .lc-best').innerText : '',
+    section: document.querySelector('#modal .modal-section-title') ? document.querySelector('#modal .modal-section-title').innerText : ''
+  })`);
+  check('通关后菜单显示最佳成绩与累计星级、解锁第 2 关',
+    menuRec.cards === 3 && menuRec.enabled === 2
+    && menuRec.best.includes('最佳') && menuRec.section.includes('累计'),
+    `${menuRec.enabled} 关可选 / ${menuRec.best.trim()} / ${menuRec.section.trim()}`);
+  await evalJS(`document.querySelector('#modal [data-action="level"][data-level="1"]').click()`);
+  const picked = await waitFor(
+    `(window.__marbleMaze.game.levelIndex === 1 && window.__marbleMaze.game.state === 'playing')`, 2500, false);
+  const pickedState = await evalJS(`({
+    level: window.__marbleMaze.game.levelIndex,
+    score: window.__marbleMaze.game.score,
+    state: window.__marbleMaze.game.state
+  })`);
+  check('选关可直接进入已解锁关卡并按新一局计分',
+    picked && pickedState.level === 1 && pickedState.score === 0,
+    `第 ${pickedState.level + 1} 关 / 总分 ${pickedState.score}`);
+
+  await sleep(200);
+  const httpErrors = errors.length;
+  check('HTTP 模式下控制台无错误', httpErrors === 0, errors.slice(0, 2).join(' | ') || '无');
+
+  const fileUrl = 'file:///' + encodeURI(path.join(root, 'index.html').replace(/\\/g, '/'));
+  await send('Page.navigate', { url: fileUrl });
+  await sleep(2600);
+  const fileInit = await evalJS(`(() => {
+    const c = document.getElementById('scene');
+    const g = window.__marbleMaze && window.__marbleMaze.game;
+    return {
+      hook: !!window.__marbleMaze, state: g && g.state,
+      webgl2: !!c.getContext('webgl2'), walls: g && g.level.walls.length,
+      modal: document.getElementById('modal').innerText.slice(0, 20)
+    };
+  })()`);
+  check('file:// 双击打开即可运行（无需服务器）',
+    fileInit.hook === true && fileInit.state === 'menu' && fileInit.webgl2 === true && fileInit.walls > 0,
+    `${fileInit.state} / ${fileInit.walls} 段墙 / ${fileInit.modal.trim()}`);
+  const fileErrors = errors.length - httpErrors;
+  check('file:// 模式下控制台无错误', fileErrors === 0, errors.slice(httpErrors, httpErrors + 2).join(' | ') || '无');
+
+  await evalJS(`window.__marbleMaze.game.start(); window.__marbleMaze.game.nextLevel()`);
+  await sleep(700);
+  const l2Mech = await evalJS(`({
+    level: window.__marbleMaze.game.levelIndex,
+    boosts: window.__marbleMaze.game.level.boosts.length,
+    meshes: window.__marbleMaze.view.boostMeshes.length,
+    ice: window.__marbleMaze.game.level.iceZones.length
+  })`);
+  check('第 2 关生成 3 条加速带并同步 3D 箭头',
+    l2Mech.level === 1 && l2Mech.boosts === 3 && l2Mech.meshes === 3 && l2Mech.ice === 0,
+    `${l2Mech.boosts} 条加速带 / ${l2Mech.meshes} 个箭头`);
+  const boostHit = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const b = g.level.boosts[0];
+    g.marble.respawn(b);
+    const ev = g.marble.step(1 / 120, g.cfg);
+    return { evBoost: ev.boost, proj: g.marble.vx * b.dirX + g.marble.vz * b.dirZ };
+  })()`);
+  check('加速带在浏览器内实际给出定向冲量',
+    boostHit.evBoost === 0 && boostHit.proj > 1.5,
+    `投影速度 ${boostHit.proj.toFixed(2)}`);
+  const boostGuide = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.handleEvents({ hits: 0, fell: -1, hazard: -1, gems: [], goal: false, boost: 0, checkpoint: -1, ice: false });
+    const seen = g.records.hintSeen('boost');
+    const text = document.getElementById('toast').textContent;
+    const again = g.hintOnce('boost', '不该弹');
+    return { seen, text, again };
+  })()`);
+  check('加速带机制讲解只弹一次',
+    boostGuide.seen && boostGuide.text.includes('加速带') && boostGuide.again === false,
+    `提示「${boostGuide.text}」/ 二次 ${boostGuide.again}`);
+
+  await evalJS(`window.__marbleMaze.game.nextLevel()`);
+  await sleep(1600);
+  const l3Mech = await evalJS(`({
+    level: window.__marbleMaze.game.levelIndex,
+    ice: window.__marbleMaze.game.level.iceZones.length,
+    iceMeshes: window.__marbleMaze.view.iceMeshes.length,
+    boosts: window.__marbleMaze.game.level.boosts.length,
+    checkpoints: window.__marbleMaze.game.level.checkpoints.length,
+    cpMeshes: window.__marbleMaze.view.checkpointMeshes.length
+  })`);
+  check('第 3 关生成冰面 / 加速带 / 检查点且 3D 对象齐备',
+    l3Mech.level === 2 && l3Mech.ice === 4 && l3Mech.iceMeshes === 4
+    && l3Mech.boosts === 3 && l3Mech.checkpoints === 2 && l3Mech.cpMeshes === 2,
+    `冰面 ${l3Mech.ice} / 加速 ${l3Mech.boosts} / 检查点 ${l3Mech.checkpoints}`);
+  const iceHit = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const z = g.level.iceZones[0];
+    g.marble.respawn(z);
+    const ev = g.marble.step(1 / 120, g.cfg);
+    return { evIce: ev.ice, flag: g.marble.onIce };
+  })()`);
+  check('冰面在浏览器内生效（低摩擦标记）', iceHit.evIce === true && iceHit.flag === true);
+  const iceGuide = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.handleEvents({ hits: 0, fell: -1, hazard: -1, gems: [], goal: false, boost: -1, checkpoint: -1, ice: true });
+    const seen = g.records.hintSeen('ice');
+    const text = document.getElementById('toast').textContent;
+    return { seen, text, again: g.hintOnce('ice', '不该弹') };
+  })()`);
+  check('冰面机制讲解只弹一次',
+    iceGuide.seen && iceGuide.text.includes('冰面') && iceGuide.again === false,
+    `提示「${iceGuide.text}」/ 二次 ${iceGuide.again}`);
+  // 用当前源自包含的写入→读回验证持久化：HTTP 与 file:// 是不同源，
+  // 前面积累的 tilt/checkpoint 在另一源里，不能跨源断言。
+  const persistedHints = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const before = g.records.hintSeen('goal');
+    const first = g.records.markHint('goal');
+    const raw = JSON.parse(localStorage.getItem('marble-maze-3d.records.v1') || '{}');
+    const inStore = !!(raw.hints && raw.hints.goal === true);
+    return { before, first, inStore, keys: raw.hints ? Object.keys(raw.hints).sort().join(',') : '' };
+  })()`);
+  check('一次性引导状态立即写入存档并可回读',
+    persistedHints.before === false && persistedHints.first === true
+    && persistedHints.inStore === true,
+    persistedHints.keys);
+  const particles = await evalJS(`(() => {
+    const v = window.__marbleMaze.view;
+    v.burstGoal();
+    return { has: !!v.goalParticles, n: v.particleVel.length, life: v.particleLife };
+  })()`);
+  check('通关终点粒子可触发', particles.has && particles.n > 20 && particles.life > 0,
+    `${particles.n} 个粒子`);
+
+  const camL3 = await evalJS(`({
+    d: window.__marbleMaze.view.camera.position.length(),
+    span: window.__marbleMaze.view.span,
+    level: window.__marbleMaze.game.levelIndex
+  })`);
+  const camBase = camL3.span * 1.15 + 5.5;
+  check('大关卡相机自动拉远以避让 HUD', camL3.level === 2 && camL3.d > camBase * 1.10,
+    `dist ${camL3.d.toFixed(1)} > 基线 ${camBase.toFixed(1)} × 1.10`);
+
+  const qProbe = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    h.quality.setMode('high');   const hi = h.view.stats();
+    h.quality.setMode('medium'); const md = h.view.stats();
+    h.quality.setMode('low');    const lo = h.view.stats();
+    h.quality.setMode('high');
+    h.quality.setMode('auto');
+    const label = document.getElementById('btnQuality').textContent;
+    const before = h.quality.level;
+    const changed = h.quality.probe(18, performance.now() + 100000);
+    const after = h.quality.level;
+    h.quality.setMode('high');
+    return { hi, md, lo, label, before, changed, after };
+  })()`);
+  check('手动画质档位真正改变像素比上限、阴影贴图与阴影开关',
+    qProbe.hi.pixelRatioCap > qProbe.md.pixelRatioCap
+    && qProbe.md.pixelRatioCap > qProbe.lo.pixelRatioCap
+    && qProbe.hi.shadowSize === 1024 && qProbe.md.shadowSize === 512
+    && qProbe.hi.shadows === true && qProbe.lo.shadows === false,
+    `cap ${qProbe.hi.pixelRatioCap}/${qProbe.md.pixelRatioCap}/${qProbe.lo.pixelRatioCap}`
+    + ` · shadow ${qProbe.hi.shadows}/${qProbe.lo.shadows}`);
+  check('自动模式按帧率降级且按钮文案同步',
+    qProbe.label === '画质 自动' && qProbe.before === 'high'
+    && qProbe.changed === true && qProbe.after === 'low',
+    `${qProbe.before} -> ${qProbe.after}`);
+
+  // 必须以同一关卡作前后对比：13×13 的几何体本来就比 7×7 多。
+  // 每次切关后强制渲染一帧，确保所有 geometry 真的上传过 GPU，
+  // 这样 clearBoard() 若漏掉 dispose，info.memory 就会持续累积。
+  await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    h.quality.setMode('high');
+    h.game.loadLevel(2);
+    h.view.update(0.016, h.game.marble, { fall: 0 });
+    return true;
+  })()`);
+  await sleep(300);
+  const leakBefore = await evalJS(`window.__marbleMaze.view.stats()`);
+  await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    for (let i = 0; i < 12; i++) {
+      h.game.loadLevel(i % 3);
+      h.view.update(0.016, h.game.marble, { fall: 0 });
+    }
+    h.game.loadLevel(2);
+    h.view.update(0.016, h.game.marble, { fall: 0 });
+    return true;
+  })()`);
+  await sleep(300);
+  const leakAfter = await evalJS(`window.__marbleMaze.view.stats()`);
+  check('反复切关 12 次后 GPU 几何体 / 纹理数量不持续增长',
+    leakAfter.geometries <= leakBefore.geometries + 6
+    && leakAfter.textures <= leakBefore.textures + 1,
+    `几何体 ${leakBefore.geometries} -> ${leakAfter.geometries}`
+    + ` / 纹理 ${leakBefore.textures} -> ${leakAfter.textures}`);
+
+  const glSafety = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    const stateBefore = h.game.state;
+    h.handleContextLost({ preventDefault() {} });
+    const lost = {
+      flag: h.isContextLost(), state: h.game.state,
+      pill: document.getElementById('statusPill').innerText
+    };
+    h.handleContextRestored();
+    const restored = {
+      flag: h.isContextLost(), env: !!h.view.envRT.texture,
+      pill: document.getElementById('statusPill').innerText
+    };
+    if (h.game.state === 'paused') h.game.resume();
+    return { stateBefore, lost, restored };
+  })()`);
+  check('WebGL 上下文丢失时自动暂停并给出状态提示',
+    glSafety.lost.flag === true && glSafety.lost.state === 'paused'
+    && glSafety.lost.pill.includes('丢失'),
+    `${glSafety.stateBefore} -> ${glSafety.lost.state} / ${glSafety.lost.pill}`);
+  check('上下文恢复后重建环境贴图并清除丢失标记',
+    glSafety.restored.flag === false && glSafety.restored.env === true
+    && glSafety.restored.pill === '已恢复',
+    `env=${glSafety.restored.env} / ${glSafety.restored.pill}`);
+
+  const touchOrbit = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    const c = document.getElementById('scene');
+    const mk = (type, id, x, y) => new PointerEvent(type, {
+      pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true
+    });
+    const yaw0 = h.view.cam.tYaw;
+    c.dispatchEvent(mk('pointerdown', 11, 100, 100));
+    c.dispatchEvent(mk('pointerdown', 12, 200, 100));
+    c.dispatchEvent(mk('pointermove', 12, 260, 100));
+    const yaw1 = h.view.cam.tYaw;
+    c.dispatchEvent(mk('pointerup', 11, 100, 100));
+    c.dispatchEvent(mk('pointerup', 12, 260, 100));
+    return { yaw0, yaw1, delta: yaw1 - yaw0 };
+  })()`);
+  check('触屏双指拖动可旋转观察视角',
+    Math.abs(touchOrbit.delta - 0.3) < 0.02,
+    `yaw ${touchOrbit.yaw0.toFixed(2)} -> ${touchOrbit.yaw1.toFixed(2)}`);
+
+  const motionProbe = await evalJS(`(async () => {
+    const h = window.__marbleMaze;
+    const label = () => document.getElementById('btnTilt').textContent;
+    if (!window.DeviceOrientationEvent) return { supported: false, label: label() };
+    await h.toggleMotion();
+    const e = new Event('deviceorientation');
+    Object.defineProperty(e, 'beta', { value: 58 });
+    Object.defineProperty(e, 'gamma', { value: 28 });
+    window.dispatchEvent(e);
+    const axis = h.motionAxis();
+    await h.toggleMotion();
+    return { supported: true, axis, label: label() };
+  })()`);
+  check('陀螺仪输入映射正确，关闭后回到键鼠状态',
+    (!motionProbe.supported && motionProbe.label === '体感 关')
+    || (motionProbe.supported && motionProbe.axis
+      && Math.abs(motionProbe.axis.x - 1) < 0.02
+      && Math.abs(motionProbe.axis.z - 1) < 0.02
+      && motionProbe.label === '体感 关'),
+    JSON.stringify(motionProbe));
+
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 600, height: 900, deviceScaleFactor: 1, mobile: true
+  });
+  await sleep(450);
+  const narrow = await evalJS(`(() => {
+    const t = document.getElementById('mapToggle');
+    const p = document.getElementById('sidePanel');
+    const toggleDisplay = getComputedStyle(t).display;
+    const before = getComputedStyle(p).display;
+    t.click();
+    const after = getComputedStyle(p).display;
+    return { toggleDisplay, before, after, label: t.innerText };
+  })()`);
+  check('窄屏下小地图改为可展开浮层而非直接隐藏',
+    narrow.toggleDisplay !== 'none' && narrow.before === 'none'
+    && narrow.after !== 'none' && narrow.label.includes('收起'),
+    `按钮 ${narrow.toggleDisplay} / 面板 ${narrow.before} -> ${narrow.after}`);
+  await send('Emulation.clearDeviceMetricsOverride');
+  await sleep(300);
+
+  const fallback = await evalJS(`(() => {
+    window.__marbleMaze.showUnsupported('图形初始化失败', '测试注入的降级路径');
+    return {
+      text: document.getElementById('modal').innerText,
+      visible: document.getElementById('overlay').classList.contains('visible'),
+      pill: document.getElementById('statusPill').innerText
+    };
+  })()`);
+  check('WebGL 不可用时显示明确提示而非白屏',
+    fallback.visible && fallback.text.includes('图形初始化失败')
+    && fallback.text.includes('WebGL2') && fallback.pill === '图形不可用',
+    fallback.text.slice(0, 40).replace(/\n/g, ' '));
+  await evalJS(`window.__marbleMaze.game.toMenu()`);
+  check('P2 全流程无控制台错误', errors.length === 0,
+    errors.slice(0, 2).join(' | ') || '无');
+
+  if (errors.length) errors.slice(0, 8).forEach((e) => console.log('    ' + e));
+}
+
+try {
+  await main();
+} catch (e) {
+  failed += 1;
+  console.log('  FAIL  验证脚本异常: ' + (e.stack || e.message));
+} finally {
+  if (ws) ws.close();
+  if (edge) edge.kill();
+  server.kill();
+  console.log(`\n结果: ${passed} 项通过, ${failed} 项失败`);
+  if (failed > 0) process.exit(1);
+}
