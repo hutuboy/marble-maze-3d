@@ -294,8 +294,40 @@ function boot(view) {
     return ok;
   }
 
+  async function runAIDesign() {
+    const input = document.getElementById('aiPrompt');
+    const status = document.getElementById('aiStatus');
+    const prompt = input ? input.value.trim() : '';
+    if (!prompt) { if (status) status.textContent = '请先描述你想要的迷宫。'; return; }
+    if (status) status.textContent = 'AI 正在生成并校验迷宫…';
+    const r = await game.designLevel(prompt);
+    if (!r.ok && status) status.textContent = r.reason;
+  }
+
+  async function runAINarrative() {
+    const input = document.getElementById('aiTheme');
+    const box = document.getElementById('aiStory');
+    const theme = input ? input.value.trim() : '';
+    if (!theme) { if (box) box.textContent = '请先输入一个主题。'; return; }
+    if (box) box.textContent = '生成中…';
+    const r = await game.narrate(theme);
+    if (box && r) box.innerHTML = `${r.story.name} · ${r.story.subtitle}<br>${r.story.tip}`
+      + `<br><small>${r.mode === 'ai' ? '魔搭 AI' : '本地引擎'}</small>`;
+  }
+
+  async function runAIReport() {
+    const box = document.getElementById('aiReport');
+    if (box) box.value = '生成中…';
+    const r = await game.aiReport();
+    if (box) box.value = r.text;
+  }
+
   const ACTIONS = {
     start: () => game.start(),
+    'ai-lab': () => game.showAILab(),
+    'ai-design': () => runAIDesign(),
+    'ai-narrative': () => runAINarrative(),
+    'ai-report': () => runAIReport(),
     level: (ds) => game.startFrom(ds.level),
     difficulty: (ds) => {
       if (game.setDifficulty(ds.mode)) ui.toast(`难度 · ${difficultyLabel(ds.mode)}`, 'info');

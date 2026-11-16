@@ -189,6 +189,15 @@ export class UI {
     this.toastTimer = setTimeout(() => el.classList.remove('visible'), 1400);
   }
 
+  // AI 教练建议异步到达时注入结算弹窗占位区；弹窗可能已切换，故先判存在。
+  setAICoach(tips, mode = 'local') {
+    const box = document.getElementById('aiCoach');
+    if (!box || !Array.isArray(tips) || !tips.length) return;
+    const tag = mode === 'ai' ? '魔搭 AI 教练建议' : '本地教练建议';
+    box.innerHTML = `<div class="ai-coach-title">${tag}</div>`
+      + tips.map((t) => `<div class="ai-coach-row">· ${t}</div>`).join('');
+  }
+
   hideOverlay() {
     this.overlayType = '';
     this.el.overlay.classList.remove('visible');
@@ -488,8 +497,29 @@ const OVERLAY_HTML = {
     </div>
     <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}</div>
     <div class="level-picker">${levelCards(d)}</div>
-    <button class="primary-btn" data-action="start">从第 1 关开始 <span>↵</span></button>
-    <p class="modal-foot">纯前端运行 · 无需联网 · 所有画面与音效均由代码生成${d.persistent === false ? ' · 本机存储不可用，成绩仅本次有效' : ''}</p>`,
+    <div class="modal-btns">
+      <button class="primary-btn" data-action="start">从第 1 关开始 <span>↵</span></button>
+      <button class="ghost-btn" data-action="ai-lab">AI 实验室</button>
+    </div>
+    <p class="modal-foot">纯前端运行 · AI 功能由魔搭提供（离线自动降级）${d.persistent === false ? ' · 本机存储不可用，成绩仅本次有效' : ''}</p>`,
+
+  ailab: (d) => `
+    <div class="modal-tag">AI LAB · MODELSCOPE</div>
+    <h1>AI 实验室</h1>
+    <p class="modal-lead">用一句话描述你想要的迷宫，AI 会生成并校验可解性；教练会根据你的表现给出建议。</p>
+    <div class="ai-panel">
+      <label class="ai-label" for="aiPrompt">关卡设计师 · 描述难度与机制</label>
+      <textarea class="ai-input" id="aiPrompt" rows="3" placeholder="例如：难一点，有熔岩和冰面，多加加速带和检查点">${d.prompt || ''}</textarea>
+      <button class="primary-btn ai-run" data-action="ai-design" id="aiDesignBtn">生成并开玩</button>
+      <div class="ai-status" id="aiStatus">${d.status || '提示：离线时会使用本地规则引擎，同样可玩。'}</div>
+      <label class="ai-label" for="aiTheme">叙事主题 · 给关卡起个名字</label>
+      <input class="ai-input" id="aiTheme" type="text" placeholder="例如：冰天雪地 / 熔岩深渊" value="${d.theme || ''}">
+      <button class="ghost-btn ai-run" data-action="ai-narrative">生成主题</button>
+      <div class="ai-story" id="aiStory">${d.story ? `${d.story.name} · ${d.story.subtitle}<br>${d.story.tip}` : ''}</div>
+      <button class="ghost-btn ai-run" data-action="ai-report">生成训练报告</button>
+      <textarea class="ai-report" id="aiReport" rows="6" readonly>${d.report || ''}</textarea>
+    </div>
+    <div class="modal-btns"><button class="ghost-btn" data-action="menu">返回主菜单</button></div>`,
 
   paused: (d) => `
     <div class="modal-tag">PAUSED</div>
@@ -523,7 +553,11 @@ const OVERLAY_HTML = {
       ['累计总分', d.score],
       ['最佳用时', d.best ? fmtTime(d.best.time) : '—']
     ])}
-    <button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`,
+    ${d.aiPraise ? `<div class="ai-praise">${d.aiPraise}</div>` : ''}
+    <div class="ai-coach" id="aiCoach"></div>
+    ${d.isAI
+      ? '<div class="modal-btns"><button class="primary-btn" data-action="menu">返回主菜单 <span>↵</span></button></div>'
+      : `<button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`}`,
 
   gameclear: (d) => `
     <div class="modal-tag success">ALL CLEAR</div>

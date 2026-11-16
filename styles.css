@@ -347,6 +347,28 @@ kbd {
 .modal-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .modal-foot { margin: 10px 0 0; font-size: 11px; color: #6f8497; }
 
+/* AI 实验室与教练建议 */
+.ai-panel { display: flex; flex-direction: column; gap: 8px; text-align: left; margin: 4px 0 14px; }
+.ai-label { font-size: 11px; letter-spacing: 1px; color: #9fd8ff; }
+.ai-input {
+  width: 100%; box-sizing: border-box; font-family: inherit; font-size: 12px;
+  color: var(--text); background: rgba(90, 140, 185, 0.10);
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; resize: vertical;
+}
+.ai-input:focus { outline: none; border-color: #8fd6ff; }
+.ai-run { align-self: flex-start; padding: 7px 14px; font-size: 12px; }
+.ai-status, .ai-story { font-size: 11px; color: #8fa4b8; line-height: 1.6; min-height: 14px; }
+.ai-story small { color: #6f8497; }
+.ai-report {
+  width: 100%; box-sizing: border-box; font-family: var(--font-mono, monospace); font-size: 11px;
+  color: #cfe3f5; background: rgba(6, 14, 24, 0.6);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; resize: vertical;
+}
+.ai-coach { margin-top: 8px; text-align: left; }
+.ai-coach-title { font-size: 11px; letter-spacing: 1px; color: #9fd8ff; margin-bottom: 4px; }
+.ai-coach-row { font-size: 11px; color: #b9cbdb; line-height: 1.6; padding-left: 4px; }
+.ai-praise { font-size: 12px; color: #ffd98a; margin: 6px 0; }
+
 .level-picker {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

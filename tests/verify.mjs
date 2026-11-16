@@ -2,6 +2,7 @@ import { LEVELS, buildLevel, BALL_R, CELL, WALL_T, BOOST_IMPULSE } from '../src/
 import { Marble } from '../src/physics.js';
 import { Records } from '../src/records.js';
 import { Sfx } from '../src/audio.js';
+import { AIService, localDesign, localCoach, localNarrative, localReport, sanitizeLevelInput, validateLevelInput, extractJSON } from '../src/ai.js';
 import { FixedClock, STEP, MAX_CATCHUP, MAX_STEPS } from '../src/clock.js';
 import { decideQuality, QualityController } from '../src/quality.js';
 import { minimapSize } from '../src/ui.js';
@@ -212,6 +213,58 @@ try {
 }
 console.log('');
 
+console.log('AI 设计师 / 教练 / 叙事');
+{
+  check('从围栏文本中稳定抽取 JSON',
+    JSON.stringify(extractJSON('结果：```json\n{"a":1,"b":[2]}\n``` 谢谢')) === '{"a":1,"b":[2]}'
+    && extractJSON('没有 JSON') === null);
+
+  const bad = sanitizeLevelInput({ cols: 99, rows: -3, holes: 999, hazards: 999, tiltMax: 9, gems: 'x' });
+  check('AI 关卡参数被钳制到安全区间',
+    bad.cols === 13 && bad.rows === 7 && bad.holes <= Math.floor(13 * 7 * 0.16)
+    && bad.tiltMax === 0.40 && bad.gems >= 1 && bad.aiGenerated === true);
+
+  const easy = localDesign('简单的迷宫，要有宝石');
+  const hard = localDesign('超难地狱难度，熔岩和冰面，多加加速带');
+  check('本地设计师按难度语义生成不同规模关卡',
+    easy.cols === 7 && hard.cols === 13
+    && hard.hazards > easy.hazards && hard.ice > easy.ice,
+    `简单 ${easy.cols}x${easy.cols} / 高难 ${hard.cols}x${hard.cols}`);
+  check('生成的关卡全部通过可解性校验',
+    [easy, hard, localDesign('带检查点和空洞的中等迷宫')]
+      .every((c) => validateLevelInput(c).ok));
+
+  const tips = localCoach({ hits: 30, parHits: 10, gems: 5, gemsTotal: 6, checkpoints: 0, elapsed: 30, par: 60 });
+  check('本地教练按表现给出针对性建议',
+    tips.length >= 2 && tips.some((t) => t.includes('Shift')) && tips.some((t) => t.includes('检查点')),
+    tips.join(' / '));
+  check('本地叙事按主题产出名称与提示',
+    localNarrative('冰天雪地').name === '霜脉回廊'
+    && localNarrative('熔岩深渊').name === '熔核之心');
+  check('训练报告包含生涯统计与建议',
+    (() => {
+      const t = localReport({ clears: 3, playTime: 300, totalHits: 20, stars: 5 });
+      return t.includes('累计通关 3 次') && t.includes('建议：');
+    })());
+
+  const local = new AIService({ fetch: null });
+  const r1 = await local.design('简单迷宫');
+  check('无网络时 AI 服务降级到本地引擎且关卡可玩',
+    r1.mode === 'local' && r1.level && r1.level.solvable && r1.cfg.aiGenerated);
+
+  const mocked = new AIService({ enabled: true, fetch: async () => ({ ok: true, json: async () => ({
+    ok: true, text: JSON.stringify({ cols: 8, rows: 8, holes: 0, gems: 5, name: '云上迷宫' })
+  }) }) });
+  const r2 = await mocked.design('随便');
+  check('接入 AI 接口时采用模型产出并标记 ai 模式',
+    r2.mode === 'ai' && r2.cfg.name === '云上迷宫' && r2.cfg.cols === 8 && r2.level.solvable);
+
+  const broken = new AIService({ enabled: true, fetch: async () => ({ ok: false }) });
+  const r3 = await broken.coach({ hits: 0 });
+  check('AI 接口失败时教练建议仍可用', r3.mode === 'local' && r3.tips.length >= 1);
+}
+console.log('');
+
 console.log('生涯累计统计');
 {
   globalThis.localStorage = {
@@ -349,7 +402,7 @@ console.log('难度档位与成绩卡');
   };
   const stubUi = {
     showOverlay: noop, setStatus: noop, setTip: noop, setPauseLabel: noop,
-    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop
+    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop, setAICoach: noop
   };
   const stubSfx = { click: noop, win: noop, clearAll: noop };
   const g = new Game(stubView, stubUi, stubSfx);

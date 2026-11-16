@@ -2,6 +2,7 @@ import { LEVELS, buildLevel } from './levels.js';
 import { Marble } from './physics.js';
 import { Records } from './records.js';
 import { DIFFICULTIES, effectiveConfig } from './difficulty.js';
+import { AIService, localDesign, localCoach, localNarrative, localReport } from './ai.js';
 
 export const STATE = {
   MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', FAILING: 'failing',
@@ -20,6 +21,22 @@ export class Game {
     this.sfx = sfx;
     this.records = new Records();
     this.difficulty = this.records.difficulty;
+    // Node 纯逻辑测试没有 DOM / fetch，用空实现避免发起网络请求。
+    this.ai = (typeof document !== 'undefined')
+      ? new AIService()
+      : {
+          design: async (t) => {
+            const cfg = localDesign(t);
+            return { cfg, level: null, mode: 'local', source: 'local' };
+          },
+          coach: async (s) => ({ tips: localCoach(s), mode: 'local' }),
+          narrative: async (t) => ({ story: localNarrative(t), mode: 'local' }),
+          report: async (s) => ({ text: localReport(s), mode: 'local' }),
+          mode: 'local'
+        };
+    this.aiLevel = null;       // 当前 AI 生成关卡的 cfg（非 null 时走定制关卡）
+    this.aiStory = null;       // 当前关卡叙事
+    this.aiCoach = [];         // 最近一次教练建议
     this.state = STATE.MENU;
     this.levelIndex = 0;
     this.score = 0;
@@ -45,7 +62,9 @@ export class Game {
     this.ui.setStatus('准备开始', 'normal');
   }
 
-  get cfg() { return effectiveConfig(LEVELS[this.levelIndex], this.difficulty); }
+  get cfg() {
+    return this.cfgOverride || effectiveConfig(LEVELS[this.levelIndex], this.difficulty);
+  }
 
   get assistMode() { return !!(DIFFICULTIES[this.difficulty] || DIFFICULTIES.standard).assist; }
 
@@ -135,6 +154,91 @@ export class Game {
     return best;
   }
 
+  // ---------- AI 能力 ----------
+  showAILab() {
+    this.ui.showOverlay('ailab', { mode: this.ai.mode });
+  }
+
+  // AI 设计师：把自然语言需求变成经过可解性校验的定制关卡并立即开玩。
+  async designLevel(prompt) {
+    const r = await this.ai.design(prompt);
+    if (!r || !r.cfg || !r.level) return { ok: false, reason: '生成失败，请换个描述重试' };
+    this.aiLevel = r.cfg;
+    this.aiStory = null;
+    this.aiCoach = [];
+    this.score = 0;
+    this.lives = 3;
+    this.totalTime = 0;
+    this.totalHits = 0;
+    this.loadConfigured(r.cfg, r.level);
+    this.state = STATE.PLAYING;
+    this.ui.hideOverlay();
+    this.ui.setStatus('AI 定制关卡', 'good');
+    this.ui.toast(`${r.cfg.name} · ${r.mode === 'ai' ? 'AI 生成' : '本地生成'}`, 'good');
+    this.sfx.click();
+    return { ok: true, cfg: r.cfg, mode: r.mode };
+  }
+
+  // 用外部（AI）配置与已构建的 level 载入，复用普通关卡的全部初始化流程。
+  loadConfigured(cfg, level) {
+    this.levelIndex = 0;
+    this.cfgOverride = cfg;
+    this.level = level;
+    for (const gem of this.level.gems) gem.taken = false;
+    this.marble = new Marble(this.level);
+    this.elapsed = 0;
+    this.hits = 0;
+    this.gemsGot = 0;
+    this.fallProgress = 0;
+    this.warnAt = -1;
+    this.wasOnIce = false;
+    this.playFlushAccum = 0;
+    this.axis = { x: 0, z: 0 };
+    this.view.buildLevel(this.level);
+    this.view.setGemsVisible(this.level);
+    this.view.setCheckpointsActive(this.level);
+    this.ui.setTip(cfg.tip || level.cfg.tip || 'AI 定制迷宫');
+    this.ui.setPauseLabel(false);
+    this.ui.clearTrail();
+    this.ui.flashLevel();
+    this.updateHUD();
+  }
+
+  // AI 叙事：给定制关卡起名字、写提示与通关赞语。
+  async narrate(theme) {
+    const r = await this.ai.narrative(theme);
+    if (!r || !r.story) return null;
+    this.aiStory = r.story;
+    if (this.state === STATE.MENU) this.ui.toast(`AI 主题：${r.story.name}`, 'info');
+    return { story: r.story, mode: r.mode };
+  }
+
+  // AI 教练：把本关表现交给模型，给出针对性建议并写入结算弹窗占位。
+  async askCoach() {
+    const telemetry = {
+      elapsed: this.elapsed, hits: this.hits, gems: this.gemsGot,
+      gemsTotal: this.level.gems.length,
+      checkpoints: this.level.checkpoints.filter((c) => c.active).length,
+      par: this.cfg.par, parHits: this.cfg.parHits,
+      timeLimit: this.cfg.timeLimit, level: this.cfg.name
+    };
+    const r = await this.ai.coach(telemetry);
+    this.aiCoach = r && r.tips ? r.tips : [];
+    if (typeof this.ui.setAICoach === 'function') {
+      this.ui.setAICoach(this.aiCoach, r ? r.mode : 'local');
+    }
+    return { tips: this.aiCoach, mode: r ? r.mode : 'local' };
+  }
+
+  async aiReport() {
+    const r = await this.ai.report({
+      clears: this.records.clearCount, playTime: this.records.playTime,
+      totalHits: this.totalHits, stars: this.records.starsForMode(this.difficulty),
+      level: { name: this.cfg.name, elapsed: this.elapsed, hits: this.hits }
+    });
+    return r;
+  }
+
   rewardBreakdown() {
     const cfg = this.cfg;
     const timeCost = Math.round(this.elapsed * 4);
@@ -161,6 +265,10 @@ export class Game {
 
   loadLevel(i) {
     this.levelIndex = i;
+    this.cfgOverride = null;
+    this.aiLevel = null;
+    this.aiStory = null;
+    this.aiCoach = [];
     this.level = buildLevel(this.cfg);
     if (!this.level.solvable) console.warn('关卡连通性校验未通过，请检查种子配置');
     for (const gem of this.level.gems) gem.taken = false;
@@ -401,6 +509,8 @@ export class Game {
       difficulty: this.difficulty,
       difficultyLabel: DIFFICULTIES[this.difficulty].label,
       assist: this.assistMode,
+      isAI: !!this.aiLevel,
+      aiPraise: this.aiStory ? this.aiStory.praise : '',
       levels: LEVELS.map((c, i) => ({
         index: i, name: c.name,
         best: this.records.best(c.id, this.difficulty)
@@ -409,6 +519,8 @@ export class Game {
 
     const isLast = this.levelIndex + 1 >= LEVELS.length;
     this.state = isLast ? STATE.GAMECLEAR : STATE.LEVELCLEAR;
+    // AI 教练异步返回后注入占位区，不阻塞结算弹窗出现。
+    this.askCoach();
     if (isLast) {
       this.sfx.clearAll();
       this.ui.showOverlay('gameclear', {
