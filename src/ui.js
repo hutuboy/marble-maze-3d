@@ -6,6 +6,16 @@ const fmtTime = (s) => {
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
 
+// 生涯累计时长：超过 1 小时改用「X小时YY分」，避免六位数秒数挤爆菜单。
+const fmtCareer = (s) => {
+  const t = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  return h > 0
+    ? `${h}小时${String(m).padStart(2, '0')}分`
+    : `${m}分${String(t % 60).padStart(2, '0')}秒`;
+};
+
 const KEY_ROWS = [
   ['W A S D / 方向键', '倾斜迷宫'],
   ['Shift + 方向 / 拖动', '精细微调倾角'],
@@ -476,7 +486,7 @@ const OVERLAY_HTML = {
       </div>
       <div><h3>操作</h3>${keyTable()}</div>
     </div>
-    <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★</div>
+    <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}</div>
     <div class="level-picker">${levelCards(d)}</div>
     <button class="primary-btn" data-action="start">从第 1 关开始 <span>↵</span></button>
     <p class="modal-foot">纯前端运行 · 无需联网 · 所有画面与音效均由代码生成${d.persistent === false ? ' · 本机存储不可用，成绩仅本次有效' : ''}</p>`,

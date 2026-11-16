@@ -1,6 +1,7 @@
 import { LEVELS, buildLevel, BALL_R, CELL, WALL_T, BOOST_IMPULSE } from '../src/levels.js';
 import { Marble } from '../src/physics.js';
 import { Records } from '../src/records.js';
+import { Sfx } from '../src/audio.js';
 import { FixedClock, STEP, MAX_CATCHUP, MAX_STEPS } from '../src/clock.js';
 import { decideQuality, QualityController } from '../src/quality.js';
 import { minimapSize } from '../src/ui.js';
@@ -211,6 +212,51 @@ try {
 }
 console.log('');
 
+console.log('生涯累计统计');
+{
+  globalThis.localStorage = {
+    _v: '{}',
+    getItem() { return this._v; },
+    setItem(_k, v) { this._v = v; }
+  };
+  const r = new Records();
+  check('累计字段初始为 0 且纳入版本化存档',
+    r.clearCount === 0 && r.playTime === 0 && r.data.v === 1);
+  r.addClear();
+  r.addPlayTime(12.5);
+  r.addPlayTime(-3);
+  r.addPlayTime(NaN);
+  r.flush();
+  const saved = JSON.parse(globalThis.localStorage._v);
+  check('通关次数即时落盘，时长由 flush 写入且忽略非法增量',
+    r.clearCount === 1 && saved.stats.clears === 1
+    && Math.abs(r.playTime - 12.5) < 1e-9
+    && Math.abs(saved.stats.playTime - 12.5) < 1e-9);
+  check('重建存档后累计字段保留',
+    new Records().clearCount === 1 && Math.abs(new Records().playTime - 12.5) < 1e-9);
+
+  globalThis.localStorage._v = JSON.stringify({ stats: { clears: -4, playTime: 'abc' } });
+  const dirty = new Records();
+  check('非法累计统计回退到 0', dirty.clearCount === 0 && dirty.playTime === 0);
+  globalThis.localStorage._v = JSON.stringify({ stats: { clears: 1e12, playTime: -9 } });
+  const clamped = new Records();
+  check('越界累计统计被钳制到上下限',
+    clamped.clearCount === 1e7 && clamped.playTime === 0);
+  delete globalThis.localStorage;
+}
+console.log('');
+
+console.log('程序化音效');
+{
+  const sfx = new Sfx();
+  let quietOk = true;
+  try { sfx.checkpoint(); sfx.boost(); sfx.ice(); } catch (_) { quietOk = false; }
+  check('三种机制各有专属音效方法，且无 WebAudio 时静默降级不抛错',
+    ['checkpoint', 'boost', 'ice'].every((k) => typeof sfx[k] === 'function') && quietOk
+    && sfx.ctx === null);
+}
+console.log('');
+
 console.log('小地图分辨率与一次性引导');
 {
   const sizes = LEVELS.map((cfg) => minimapSize(buildLevel(cfg)));
@@ -319,6 +365,14 @@ console.log('难度档位与成绩卡');
         && card.includes('第1关') && card.includes('第2关') && card.includes('第3关')
         && card.includes('累计') && card.includes('轻松档');
     })());
+  const clearsBefore = g.records.clearCount;
+  g.state = 'playing';
+  g.elapsed = 5;
+  g.clearLevel();
+  check('每通一关累计次数 +1，菜单数据带生涯统计',
+    g.records.clearCount === clearsBefore + 1
+    && g.menuData().clearCount === clearsBefore + 1
+    && g.menuData().playTime === g.records.playTime);
   delete globalThis.localStorage;
 }
 console.log('');

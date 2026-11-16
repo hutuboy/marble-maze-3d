@@ -2,6 +2,8 @@ const KEY = 'marble-maze-3d.records.v1';
 const SCHEMA = 1;
 const HINT_KEYS = ['tilt', 'checkpoint', 'boost', 'ice', 'goal'];
 const DIFFICULTY_KEYS = ['standard', 'relaxed', 'challenge'];
+const MAX_CLEARS = 1e7;
+const MAX_PLAYTIME = 1e9; // 秒，约 31 年，足以兜住任何手滑写入
 // 标准档沿用纯数字 key 以兼容旧存档；辅助档用 id:mode 分键，
 // 避免轻松档成绩污染标准档星级榜。
 const BEST_KEY_RE = /^([0-9]+)(?::(relaxed|challenge))?$/;
@@ -38,12 +40,27 @@ function sanitizeBest(raw) {
   return out;
 }
 
+// 生涯累计统计：通关次数与游玩时长。与逐关最佳成绩分开存，
+// 脏值整项回退到 0，越界数值钳制，避免 NaN 污染菜单。
+function sanitizeStats(raw) {
+  const out = { clears: 0, playTime: 0 };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const c = Number(raw.clears);
+  const p = Number(raw.playTime);
+  out.clears = Number.isFinite(c) ? Math.max(0, Math.min(MAX_CLEARS, Math.floor(c))) : 0;
+  out.playTime = Number.isFinite(p) ? Math.max(0, Math.min(MAX_PLAYTIME, p)) : 0;
+  return out;
+}
+
 // localStorage 在 file:// / 隐私模式 / 禁用 Cookie 时可能直接抛异常，
 // 这里统一降级为进程内内存记录，保证游戏逻辑与界面不受影响。
 export class Records {
   constructor() {
     this.persistent = true;
-    this.data = { v: SCHEMA, best: {}, unlocked: 1, hints: {}, difficulty: 'standard' };
+    this.data = {
+      v: SCHEMA, best: {}, unlocked: 1, hints: {}, difficulty: 'standard',
+      stats: { clears: 0, playTime: 0 }
+    };
     try {
       const store = globalThis.localStorage;
       const raw = store && store.getItem(KEY);
@@ -54,6 +71,7 @@ export class Records {
         if (parsed && typeof parsed === 'object') {
           this.data.best = sanitizeBest(parsed.best);
           this.data.hints = sanitizeHints(parsed.hints);
+          this.data.stats = sanitizeStats(parsed.stats);
           if (DIFFICULTY_KEYS.includes(parsed.difficulty)) this.data.difficulty = parsed.difficulty;
           const u = Number(parsed.unlocked);
           if (Number.isFinite(u)) this.data.unlocked = Math.max(1, Math.min(99, Math.floor(u)));
@@ -76,6 +94,26 @@ export class Records {
   }
 
   get unlocked() { return this.data.unlocked; }
+
+  get clearCount() { return this.data.stats.clears; }
+
+  get playTime() { return this.data.stats.playTime; }
+
+  // 每通过一关记一次（重复挑战也计入），立即落盘。
+  addClear() {
+    this.data.stats.clears = Math.min(MAX_CLEARS, this.data.stats.clears + 1);
+    this.save();
+  }
+
+  // 时长按帧累加但不逐帧写盘，避免 localStorage 每帧同步 I/O；
+  // 由 flush() 在节流点或语义节点（通关 / 失败 / 回菜单）统一落盘。
+  addPlayTime(seconds) {
+    const s = Number(seconds);
+    if (!Number.isFinite(s) || s <= 0) return;
+    this.data.stats.playTime = Math.min(MAX_PLAYTIME, this.data.stats.playTime + s);
+  }
+
+  flush() { this.save(); }
 
   get difficulty() { return this.data.difficulty; }
 

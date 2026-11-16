@@ -36,6 +36,7 @@ export class Game {
     this.lastRecord = null;
     this.wasOnIce = false;
     this.warnAt = -1;
+    this.playFlushAccum = 0;
     this.tiltHintDone = false;
     this.pendingReason = '';
     this.axis = { x: 0, z: 0 };
@@ -74,7 +75,9 @@ export class Game {
       difficulty: this.difficulty,
       difficultyLabel: d.label,
       assist: d.assist,
-      persistent: this.records.persistent
+      persistent: this.records.persistent,
+      clearCount: this.records.clearCount,
+      playTime: this.records.playTime
     };
   }
 
@@ -116,6 +119,12 @@ export class Game {
     if (!this.records.markHint(key)) return false;
     this.ui.toast(text, tone);
     return true;
+  }
+
+  // 累计时长节流落盘：游玩中每帧只改内存，语义节点与每 5 秒统一写一次。
+  flushStats() {
+    this.playFlushAccum = 0;
+    this.records.flush();
   }
 
   activeCheckpoint() {
@@ -276,6 +285,7 @@ export class Game {
   togglePause() {
     if (this.state === STATE.PLAYING) {
       this.state = STATE.PAUSED;
+      this.flushStats();
       this.ui.setPauseLabel(true);
       this.ui.setStatus('已暂停', 'warn');
       this.ui.showOverlay('paused', {
@@ -312,6 +322,7 @@ export class Game {
   }
 
   toMenu() {
+    this.flushStats();
     this.score = 0;
     this.lives = 3;
     this.totalTime = 0;
@@ -339,6 +350,7 @@ export class Game {
   fail(reason) {
     if (this.state === STATE.FAILED || this.state === STATE.GAMEOVER) return;
     this.lives -= 1;
+    this.flushStats();
     this.sfx.fail();
     this.ui.setStatus('失败', 'danger');
     const cp = this.activeCheckpoint();
@@ -367,10 +379,12 @@ export class Game {
     this.ui.setStatus('通关', 'good');
 
     const stars = this.starsFor(this.cfg, this.elapsed, this.hits);
+    this.records.addClear();
     const rec = this.records.submit(this.cfg.id, {
       time: this.elapsed, score: this.lastLevelScore, stars, mode: this.difficulty
     });
     this.records.unlock(Math.min(LEVELS.length, this.levelIndex + 2));
+    this.flushStats();
     this.lastStars = stars;
     this.lastRecord = rec;
     this.view.burstGoal();
@@ -423,15 +437,16 @@ export class Game {
       this.view.setGemsVisible(this.level);
     }
     if (ev.checkpoint >= 0) {
-      this.sfx.pickup();
+      this.sfx.checkpoint();
       this.view.setCheckpointsActive(this.level);
       this.hintOnce('checkpoint', '检查点已激活 · 失败后可从这里复活，进度会保留', 'good');
     }
     if (ev.boost >= 0) {
-      this.sfx.bump(1.4);
+      this.sfx.boost();
       this.hintOnce('boost', '加速带 · 沿橙色箭头方向给弹珠一次推力，注意提前回正', 'info');
     }
     if (ev.ice && !this.wasOnIce) {
+      this.sfx.ice();
       this.hintOnce('ice', '冰面 · 摩擦大幅降低，惯性会被放大，收小倾角提前减速', 'info');
     }
     this.wasOnIce = ev.ice;
@@ -449,6 +464,9 @@ export class Game {
     if (this.state === STATE.PLAYING) {
       this.elapsed += dt;
       this.totalTime += dt;
+      this.records.addPlayTime(dt);
+      this.playFlushAccum += dt;
+      if (this.playFlushAccum >= 5) this.flushStats();
       const limit = this.cfg.timeLimit;
       if (limit > 0) {
         const left = limit - this.elapsed;

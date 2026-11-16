@@ -7,7 +7,7 @@
 - 渲染：Three.js 0.187.0，打包为 IIFE；不使用 ESM importmap（避免 file:// 的 CORS 限制）。
 - 物理：自研确定性 2.5D 求解，球在迷宫局部平面运动、板整体倾斜；不用 cannon/rapier，便于严格保证不穿墙。
 - 资源：所有纹理、环境贴图、音效运行时程序化生成。
-- 验证：`npm test`（纯 Node 逻辑/物理，88 项）、`npm run test:browser`（无头 Edge CDP，82 项，含 file:// 模式）、`npm run shots`（实拍截图）。
+- 验证：`npm test`（纯 Node 逻辑/物理，95 项）、`npm run test:browser`（无头 Edge CDP，85 项，含 file:// 模式）、`npm run shots`（实拍截图）。
 
 ## 维护注意
 - 倾斜采用嵌套 Group（外 z / 内 x），物理公式与之一一对应，见 2026-11-07 日志。
@@ -33,4 +33,8 @@
 - 终点与检查点靠颜色语义区分：终点金色（光柱 + 小地图准心）、检查点青色，界面型材质须 `toneMapped:false`；改色时同步图例 `.dot.goal`、关卡 tip 与菜单文案。
 - 难度倍率只改手感参数（gravity/tiltMax/timeLimit/par），**不动 seed 与机制布置**；标准档倍率恒为 1，改动后重跑自动通关断言确认零回归。辅助档成绩键 `id:relaxed`，标准档是纯数字 `id`；`totalStars` 只统计标准档，新增档位要同步 `DIFFICULTY_KEYS`、best key 正则与 `sanitizeBest`。
 - 全通关页内容多，弹窗 `max-height: min(88vh,760px)`；新增内容要重跑「底部按钮完整可见」断言，否则按钮会被裁。
-- 浏览器/截图测试启动不能用固定 sleep，须轮询 `window.__marbleMaze.game` 就绪；UI 状态（难度按钮 label/disabled）由 `applyInput` 下一帧刷新，断言里要轮询等待而非同帧读取。
+- 浏览器/截图测试启动不能用固定 sleep，须轮询 `window.__marbleMaze.game` 就绪；UI 状态（难度按钮 label/disabled）由 `applyInput` 下一帧刷新，断言里要轮询等待而非同帧读取；注入输入后也要轮询 axis 到位（固定 220ms 在 swiftshader 下不够一帧）。注入上下文丢失前先确保 state 为 playing/failing，否则前面的全通关用例留下 gameclear 会让「自动暂停」断言假失败。
+
+## P5 约束（2026-11-16）
+- 机制音效在 `Game.handleEvents()` 走 `Sfx.checkpoint()/boost()/ice()`，不要退回 `pickup()/bump()`；冰面只在 `!wasOnIce` 的进入沿播放。`Sfx.ensure()` 用 `globalThis.AudioContext` 以便无 WebAudio 环境静默降级；新增音色要补浏览器 spy 断言。
+- 生涯统计存 `Records.data.stats = { clears, playTime }`：新增字段必须同步默认值、`sanitizeStats()`、构造读取三处。时长只能 `addPlayTime()` 累积，由 `flush()` / `Game.flushStats()` 在每 5 秒及暂停/通关/失败/回菜单落盘，禁止每帧 `save()`；通关计数在 `clearLevel()` 每次 +1（`addClear()` 自带落盘）。菜单统计内联在「选择关卡」标题行，不新增弹窗块，改文案要重跑菜单完整可见与菜单统计两条浏览器断言。

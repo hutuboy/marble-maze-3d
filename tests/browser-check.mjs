@@ -783,6 +783,9 @@ async function main() {
 
   const glSafety = await evalJS(`(() => {
     const h = window.__marbleMaze;
+    // 上下文丢失的暂停逻辑只在 playing/failing 生效；前面的全通关用例会
+    // 把状态留在 gameclear，这里显式开局，避免依赖用例执行顺序。
+    if (h.game.state !== 'playing' && h.game.state !== 'failing') h.game.start(0);
     const stateBefore = h.game.state;
     h.handleContextLost({ preventDefault() {} });
     const lost = {
@@ -830,14 +833,22 @@ async function main() {
     h.game.setAxis(0, 0);
     h.setJoystick(1, -0.5);
     const injected = h.joystickAxis();
-    // 让主循环跑几帧，axis 应由摇杆接管。
-    return new Promise((resolve) => setTimeout(() => {
-      const axis = { x: h.game.axis.x, z: h.game.axis.z };
-      const knob = document.getElementById('joystickKnob').style.transform;
-      const active = document.getElementById('joystick').classList.contains('active');
-      h.clearJoystick();
-      resolve({ injected, axis, knob, active, cleared: h.joystickAxis() });
-    }, 220));
+    // 软件渲染下一帧可能超过 220ms，轮询等主循环真正接管 axis，
+    // 避免固定 sleep 在慢速 swiftshader 上偶发读到 0。
+    const t0 = Date.now();
+    return new Promise((resolve) => {
+      const poll = () => {
+        const axis = { x: h.game.axis.x, z: h.game.axis.z };
+        const ready = Math.hypot(axis.x - injected.x, axis.z - injected.z) < 0.02
+          || Date.now() - t0 > 2000;
+        if (!ready) { setTimeout(poll, 50); return; }
+        const knob = document.getElementById('joystickKnob').style.transform;
+        const active = document.getElementById('joystick').classList.contains('active');
+        h.clearJoystick();
+        resolve({ injected, axis, knob, active, cleared: h.joystickAxis() });
+      };
+      setTimeout(poll, 40);
+    });
   })()`);
   // setJoystick(1,-0.5) 会被限制在单位圆内：长度 1/√1.25≈0.894，方向不变。
   const jl = Math.hypot(1, 0.5);
@@ -890,6 +901,66 @@ async function main() {
     `按钮 ${narrow.toggleDisplay} / 面板 ${narrow.before} -> ${narrow.after}`);
   await send('Emulation.clearDeviceMetricsOverride');
   await sleep(300);
+
+  const careerProbe = await evalJS(`(async () => {
+    const g = window.__marbleMaze.game;
+    const menuText = () => document.getElementById('modal').innerText;
+    g.toMenu();
+    const before = { clears: g.records.clearCount, time: g.records.playTime };
+    const menuBefore = menuText();
+    g.start(0);
+    await new Promise((r) => setTimeout(r, 260));
+    g.togglePause();
+    const during = { clears: g.records.clearCount, time: g.records.playTime };
+    const stored = JSON.parse(localStorage.getItem('marble-maze-3d.records.v1'));
+    g.start(0);
+    g.clearLevel();
+    const afterClear = g.records.clearCount;
+    g.toMenu();
+    return {
+      before, during, afterClear, menuBefore, menuAfter: menuText(),
+      storedClears: stored.stats.clears, storedTime: stored.stats.playTime
+    };
+  })()`);
+  check('游玩时长持续增长且暂停时落盘',
+    careerProbe.during.time > careerProbe.before.time + 0.1
+    && Math.abs(careerProbe.storedTime - careerProbe.during.time) < 0.2,
+    `${careerProbe.before.time.toFixed(2)}s -> ${careerProbe.during.time.toFixed(2)}s / 存档 ${careerProbe.storedTime.toFixed(2)}s`);
+  check('通关次数跨关累计并在菜单展示生涯统计',
+    careerProbe.afterClear === careerProbe.before.clears + 1
+    && careerProbe.storedClears === careerProbe.before.clears
+    && careerProbe.menuBefore.includes('生涯通关')
+    && careerProbe.menuBefore.includes('游玩')
+    && careerProbe.menuAfter.includes('生涯通关 ' + careerProbe.afterClear + ' 次'),
+    `通关 ${careerProbe.before.clears} -> ${careerProbe.afterClear} / ${careerProbe.menuAfter.split('\n').find((s) => s.includes('生涯通关')) || ''}`);
+
+  const sfxProbe = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const sfx = g.sfx;
+    const names = ['checkpoint', 'boost', 'ice', 'bump', 'pickup'];
+    const calls = [];
+    const orig = {};
+    for (const n of names) {
+      if (typeof sfx[n] !== 'function') { calls.push('missing:' + n); continue; }
+      orig[n] = sfx[n];
+      sfx[n] = function (...args) { calls.push(n); return orig[n].apply(this, args); };
+    }
+    const base = { hits: 0, gems: [], checkpoint: -1, boost: -1,
+      ice: false, fell: -1, hazard: -1, goal: false };
+    g.wasOnIce = false;
+    g.handleEvents({ ...base, checkpoint: 0 });
+    g.handleEvents({ ...base, boost: 0 });
+    g.handleEvents({ ...base, ice: true });
+    g.handleEvents({ ...base, ice: true });
+    for (const n of Object.keys(orig)) sfx[n] = orig[n];
+    return calls;
+  })()`);
+  check('检查点/加速带/冰面改用专属音效且冰面持续滑行不重复播放',
+    sfxProbe.filter((n) => n === 'checkpoint').length === 1
+    && sfxProbe.filter((n) => n === 'boost').length === 1
+    && sfxProbe.filter((n) => n === 'ice').length === 1
+    && !sfxProbe.some((n) => n === 'bump' || n === 'pickup' || n.startsWith('missing:')),
+    sfxProbe.join(','));
 
   const fallback = await evalJS(`(() => {
     window.__marbleMaze.showUnsupported('图形初始化失败', '测试注入的降级路径');
