@@ -1,6 +1,14 @@
 const KEY = 'marble-maze-3d.records.v1';
 const SCHEMA = 1;
 const HINT_KEYS = ['tilt', 'checkpoint', 'boost', 'ice', 'goal'];
+const DIFFICULTY_KEYS = ['standard', 'relaxed', 'challenge'];
+// 标准档沿用纯数字 key 以兼容旧存档；辅助档用 id:mode 分键，
+// 避免轻松档成绩污染标准档星级榜。
+const BEST_KEY_RE = /^([0-9]+)(?::(relaxed|challenge))?$/;
+
+function bestKey(id, mode) {
+  return mode && mode !== 'standard' ? `${id}:${mode}` : String(id);
+}
 
 // 一次性引导只认白名单里的 key，避免脏存档塞入任意字段。
 function sanitizeHints(raw) {
@@ -16,7 +24,7 @@ function sanitizeBest(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for (const [k, v] of Object.entries(raw)) {
-    if (!/^[0-9]+$/.test(k) || !v || typeof v !== 'object') continue;
+    if (!BEST_KEY_RE.test(k) || !v || typeof v !== 'object') continue;
     const time = Number(v.time);
     if (!Number.isFinite(time) || time < 0 || time > 86400) continue;
     const score = Number(v.score);
@@ -35,7 +43,7 @@ function sanitizeBest(raw) {
 export class Records {
   constructor() {
     this.persistent = true;
-    this.data = { v: SCHEMA, best: {}, unlocked: 1, hints: {} };
+    this.data = { v: SCHEMA, best: {}, unlocked: 1, hints: {}, difficulty: 'standard' };
     try {
       const store = globalThis.localStorage;
       const raw = store && store.getItem(KEY);
@@ -46,6 +54,7 @@ export class Records {
         if (parsed && typeof parsed === 'object') {
           this.data.best = sanitizeBest(parsed.best);
           this.data.hints = sanitizeHints(parsed.hints);
+          if (DIFFICULTY_KEYS.includes(parsed.difficulty)) this.data.difficulty = parsed.difficulty;
           const u = Number(parsed.unlocked);
           if (Number.isFinite(u)) this.data.unlocked = Math.max(1, Math.min(99, Math.floor(u)));
         }
@@ -61,16 +70,30 @@ export class Records {
     catch (_) { this.persistent = false; }
   }
 
-  best(id) {
-    const b = this.data.best[id];
+  best(id, mode = 'standard') {
+    const b = this.data.best[bestKey(id, mode)];
     return b && Number.isFinite(b.time) ? b : null;
   }
 
   get unlocked() { return this.data.unlocked; }
 
-  get totalStars() {
+  get difficulty() { return this.data.difficulty; }
+
+  setDifficulty(mode) {
+    if (!DIFFICULTY_KEYS.includes(mode) || this.data.difficulty === mode) return false;
+    this.data.difficulty = mode;
+    this.save();
+    return true;
+  }
+
+  get totalStars() { return this.starsForMode('standard'); }
+
+  starsForMode(mode) {
     let sum = 0;
-    for (const b of Object.values(this.data.best)) sum += Number(b.stars) || 0;
+    for (const [k, b] of Object.entries(this.data.best)) {
+      const keyMode = k.includes(':') ? k.split(':')[1] : 'standard';
+      if (keyMode === mode) sum += Number(b.stars) || 0;
+    }
     return sum;
   }
 
@@ -93,17 +116,21 @@ export class Records {
 
   // 逐项取历史最优：最快用时、最高得分、最多星级，互不覆盖。
   submit(id, result) {
-    const prev = this.best(id);
+    const mode = DIFFICULTY_KEYS.includes(result.mode) ? result.mode : 'standard';
+    const key = bestKey(id, mode);
+    const prev = this.best(id, mode);
     const flags = {
       newTime: !prev || result.time < prev.time - 1e-6,
       newScore: !prev || result.score > prev.score,
       newStars: !prev || result.stars > prev.stars,
-      previous: prev
+      previous: prev,
+      mode
     };
-    this.data.best[id] = {
+    this.data.best[key] = {
       time: prev ? Math.min(prev.time, result.time) : result.time,
       score: prev ? Math.max(prev.score, result.score) : result.score,
-      stars: prev ? Math.max(prev.stars, result.stars) : result.stars
+      stars: prev ? Math.max(prev.stars, result.stars) : result.stars,
+      mode
     };
     this.save();
     return flags;

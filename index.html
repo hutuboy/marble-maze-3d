@@ -34,6 +34,7 @@
     <div class="hud-actions">
       <button type="button" id="btnPause" class="icon-btn">暂停</button>
       <button type="button" id="btnRestart" class="icon-btn">重开</button>
+      <button type="button" id="btnDifficulty" class="icon-btn">难度 标准</button>
       <button type="button" id="btnTilt" class="icon-btn">体感 关</button>
       <button type="button" id="btnQuality" class="icon-btn">画质 自动</button>
       <button type="button" id="btnMute" class="icon-btn">音效 开</button>
@@ -57,7 +58,7 @@
   </aside>
 
   <footer class="hud-bottom">
-    <div class="tips" id="tips">倾斜迷宫，把弹珠送进绿色终点。</div>
+    <div class="tips" id="tips">倾斜迷宫，把弹珠送进金色光柱标记的终点。</div>
     <div class="legend">
       <span><i class="dot start"></i>起点</span>
       <span><i class="dot goal"></i>终点</span>
@@ -72,6 +73,7 @@
 
   <div id="levelFlash" class="level-flash"></div>
   <div id="toast" class="toast" data-tone="info"></div>
+  <div id="joystick" class="joystick" aria-label="触屏方向摇杆"><div class="joystick-knob" id="joystickKnob"></div></div>
 
   <div id="overlay" class="overlay visible">
     <div class="modal" id="modal">

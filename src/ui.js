@@ -45,9 +45,10 @@ export class UI {
       tips: $('tips'), statusPill: $('statusPill'), tiltHint: $('tiltHint'),
       overlay: $('overlay'), modal: $('modal'), toast: $('toast'),
       btnPause: $('btnPause'), btnRestart: $('btnRestart'), btnMute: $('btnMute'),
-      btnTilt: $('btnTilt'), btnQuality: $('btnQuality'),
+      btnTilt: $('btnTilt'), btnQuality: $('btnQuality'), btnDifficulty: $('btnDifficulty'),
       minimap: $('minimap'), tilt: $('tilt'),
-      sidePanel: $('sidePanel'), mapToggle: $('mapToggle'), levelFlash: $('levelFlash')
+      sidePanel: $('sidePanel'), mapToggle: $('mapToggle'), levelFlash: $('levelFlash'),
+      joystick: $('joystick'), joystickKnob: $('joystickKnob')
     };
     this.mmCtx = this.el.minimap.getContext('2d');
     this.tiltCtx = this.el.tilt.getContext('2d');
@@ -119,6 +120,20 @@ export class UI {
   setPauseLabel(paused) { this.el.btnPause.textContent = paused ? '继续' : '暂停'; }
   setMuteLabel(muted) { this.el.btnMute.textContent = muted ? '音效 关' : '音效 开'; }
   setQualityLabel(text) { this.el.btnQuality.textContent = text; }
+  setDifficultyLabel(text, disabled = false) {
+    if (this.el.btnDifficulty.textContent === text
+      && this.el.btnDifficulty.disabled === disabled) return;
+    this.el.btnDifficulty.textContent = text;
+    this.el.btnDifficulty.disabled = disabled;
+  }
+
+  // 摇杆旋钮位置：dx/dz 为 -1..1 的归一化输入。
+  setJoystick(dx, dz) {
+    if (!this.el.joystickKnob) return;
+    const r = 34;
+    this.el.joystickKnob.style.transform = `translate(${dx * r}px, ${dz * r}px)`;
+    this.el.joystick.classList.toggle('active', Math.abs(dx) + Math.abs(dz) > 0.02);
+  }
 
   toggleMap() {
     const open = this.el.sidePanel.classList.toggle('open');
@@ -413,6 +428,15 @@ function recordBadge(rec) {
   return tags.length ? `<div class="record-flag">新纪录 · ${tags.join(' / ')}</div>` : '';
 }
 
+// 全通关逐关回顾：展示当前难度档下每关星级与最佳用时。
+const clearReview = (d) => (d.levels || []).map((l) => {
+  const stars = l.best ? Math.max(0, Math.min(3, Number(l.best.stars) || 0)) : 0;
+  const starStr = '★'.repeat(stars) + '<span class="off">' + '★'.repeat(3 - stars) + '</span>';
+  const time = l.best ? fmtTime(l.best.time) : '--:--';
+  return `<div class="review-row"><span>第 ${l.index + 1} 关 · ${l.name}</span>`
+    + `<span class="review-stars">${starStr}</span><b>${time}</b></div>`;
+}).join('');
+
 const levelCards = (d) => (d.levels || []).map((l) => {
   const stars = l.best ? Math.max(0, Math.min(3, Number(l.best.stars) || 0)) : 0;
   const best = l.best ? `最佳 ${fmtTime(l.best.time)} · ${l.best.score} 分` : '尚无记录';
@@ -432,6 +456,13 @@ const OVERLAY_HTML = {
     <div class="modal-tag">MARBLE MAZE · 3D</div>
     <h1>3D 弹珠迷宫</h1>
     <p class="modal-lead">倾斜整座迷宫，让弹珠靠着重力与惯性滚过墙体、绕开陷阱，抵达金色光柱标记的终点。</p>
+    <div class="difficulty-row">
+      <span>难度</span>
+      <button type="button" data-action="difficulty" data-mode="relaxed" class="diff-chip${d.difficulty === 'relaxed' ? ' active' : ''}">轻松</button>
+      <button type="button" data-action="difficulty" data-mode="standard" class="diff-chip${d.difficulty === 'standard' ? ' active' : ''}">标准</button>
+      <button type="button" data-action="difficulty" data-mode="challenge" class="diff-chip${d.difficulty === 'challenge' ? ' active' : ''}">挑战</button>
+      ${d.assist ? '<em>辅助档 · 成绩单独记录</em>' : ''}
+    </div>
     <div class="modal-cols">
       <div>
         <h3>怎么玩</h3>
@@ -488,19 +519,21 @@ const OVERLAY_HTML = {
     <div class="modal-tag success">ALL CLEAR</div>
     <h1>全部通关</h1>
     <p class="modal-lead">三座迷宫全部走完，弹珠稳稳落地。</p>
+    <div class="clear-title">${d.title || '弹珠专家'}</div>
     ${starsHTML(d.stars)}
     ${recordBadge(d.rec)}
-    <div class="stars-row">累计星级 <b>${d.totalStars}</b> / ${d.maxStars}</div>
+    <div class="stars-row">累计星级 <b>${d.totalStars}</b> / ${d.maxStars} · ${d.difficultyLabel || '标准'}${d.assist ? '（辅助档）' : ''}</div>
+    <div class="clear-review">${clearReview(d)}</div>
     ${statGrid([
       ['最终总分', d.score],
       ['总用时', fmtTime(d.totalTime)],
       ['总碰撞', d.totalHits],
-      ['剩余生命', d.lives],
-      ['本关结算', `+${d.levelScore}`],
-      ['最佳用时', d.best ? fmtTime(d.best.time) : '—']
+      ['剩余生命', d.lives]
     ])}
+    <textarea class="score-card" id="scoreCard" readonly>${d.cardText || ''}</textarea>
     <div class="modal-btns">
       <button class="primary-btn" data-action="again">再玩一次 <span>↵</span></button>
+      <button class="ghost-btn" data-action="copy-card">复制成绩卡</button>
       <button class="ghost-btn" data-action="menu">返回主菜单</button>
     </div>`,
 

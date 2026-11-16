@@ -1,10 +1,16 @@
 import { LEVELS, buildLevel } from './levels.js';
 import { Marble } from './physics.js';
 import { Records } from './records.js';
+import { DIFFICULTIES, effectiveConfig } from './difficulty.js';
 
 export const STATE = {
   MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', FAILING: 'failing',
   FAILED: 'failed', LEVELCLEAR: 'levelclear', GAMECLEAR: 'gameclear', GAMEOVER: 'gameover'
+};
+
+const fmtSeconds = (s) => {
+  const t = Math.max(0, Math.floor(s));
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
 
 export class Game {
@@ -13,6 +19,7 @@ export class Game {
     this.ui = ui;
     this.sfx = sfx;
     this.records = new Records();
+    this.difficulty = this.records.difficulty;
     this.state = STATE.MENU;
     this.levelIndex = 0;
     this.score = 0;
@@ -37,21 +44,65 @@ export class Game {
     this.ui.setStatus('准备开始', 'normal');
   }
 
-  get cfg() { return LEVELS[this.levelIndex]; }
+  get cfg() { return effectiveConfig(LEVELS[this.levelIndex], this.difficulty); }
+
+  get assistMode() { return !!(DIFFICULTIES[this.difficulty] || DIFFICULTIES.standard).assist; }
+
+  setDifficulty(mode) {
+    if (!DIFFICULTIES[mode] || this.state !== STATE.MENU) return false;
+    if (!this.records.setDifficulty(mode)) return false;
+    this.difficulty = mode;
+    this.loadLevel(0);
+    this.ui.showOverlay('menu', this.menuData());
+    this.ui.setStatus('准备开始', 'normal');
+    this.sfx.click();
+    return true;
+  }
 
   menuData() {
+    const d = DIFFICULTIES[this.difficulty] || DIFFICULTIES.standard;
     return {
       levels: LEVELS.map((c, i) => ({
         index: i,
         name: c.name,
         subtitle: c.subtitle,
         unlocked: i < this.records.unlocked,
-        best: this.records.best(c.id)
+        best: this.records.best(c.id, this.difficulty)
       })),
-      totalStars: this.records.totalStars,
+      totalStars: this.records.starsForMode(this.difficulty),
       maxStars: LEVELS.length * 3,
+      difficulty: this.difficulty,
+      difficultyLabel: d.label,
+      assist: d.assist,
       persistent: this.records.persistent
     };
+  }
+
+  // 全通关称号：按当前难度档的累计星级评定，辅助档在称号后标注以免混淆。
+  clearTitle(stars) {
+    const tiers = [
+      [9, '迷宫大师'], [7, '弹珠专家'], [5, '熟练探险家'], [1, '初出茅庐']
+    ];
+    const base = (tiers.find(([min]) => stars >= min) || [0, '初出茅庐'])[1];
+    return this.assistMode ? `${base} · 轻松档` : base;
+  }
+
+  // 成绩卡纯文本：可复制分享，file:// 下也能手选复制。
+  scoreCardText() {
+    const stars = this.records.starsForMode(this.difficulty);
+    const d = DIFFICULTIES[this.difficulty] || DIFFICULTIES.standard;
+    const rows = LEVELS.map((c, i) => {
+      const b = this.records.best(c.id, this.difficulty);
+      const starStr = b ? '★'.repeat(b.stars) + '☆'.repeat(3 - b.stars) : '☆☆☆';
+      const timeStr = b ? fmtSeconds(b.time) : '--:--';
+      return `第${i + 1}关 ${c.name}  ${starStr}  ${timeStr}`;
+    });
+    return [
+      '3D 弹珠迷宫 · 全通关',
+      `难度：${d.label}${this.assistMode ? '（辅助档）' : ''}　称号：${this.clearTitle(stars)}`,
+      ...rows,
+      `累计 ${stars} / ${LEVELS.length * 3} ★　总分 ${this.score}　总用时 ${fmtSeconds(this.totalTime)}　总碰撞 ${this.totalHits}`
+    ].join('\n');
   }
 
   starsFor(cfg, elapsed, hits) {
@@ -101,7 +152,7 @@ export class Game {
 
   loadLevel(i) {
     this.levelIndex = i;
-    this.level = buildLevel(LEVELS[i]);
+    this.level = buildLevel(this.cfg);
     if (!this.level.solvable) console.warn('关卡连通性校验未通过，请检查种子配置');
     for (const gem of this.level.gems) gem.taken = false;
     this.marble = new Marble(this.level);
@@ -317,7 +368,7 @@ export class Game {
 
     const stars = this.starsFor(this.cfg, this.elapsed, this.hits);
     const rec = this.records.submit(this.cfg.id, {
-      time: this.elapsed, score: this.lastLevelScore, stars
+      time: this.elapsed, score: this.lastLevelScore, stars, mode: this.difficulty
     });
     this.records.unlock(Math.min(LEVELS.length, this.levelIndex + 2));
     this.lastStars = stars;
@@ -330,9 +381,16 @@ export class Game {
       gemsGot: this.gemsGot, gemsTotal: this.level.gems.length,
       levelScore: this.lastLevelScore, score: this.score,
       b: this.lastBreakdown, stars, rec,
-      best: this.records.best(this.cfg.id),
-      totalStars: this.records.totalStars,
-      maxStars: LEVELS.length * 3
+      best: this.records.best(this.cfg.id, this.difficulty),
+      totalStars: this.records.starsForMode(this.difficulty),
+      maxStars: LEVELS.length * 3,
+      difficulty: this.difficulty,
+      difficultyLabel: DIFFICULTIES[this.difficulty].label,
+      assist: this.assistMode,
+      levels: LEVELS.map((c, i) => ({
+        index: i, name: c.name,
+        best: this.records.best(c.id, this.difficulty)
+      }))
     };
 
     const isLast = this.levelIndex + 1 >= LEVELS.length;
@@ -341,7 +399,9 @@ export class Game {
       this.sfx.clearAll();
       this.ui.showOverlay('gameclear', {
         ...common,
-        totalTime: this.totalTime, totalHits: this.totalHits, lives: this.lives
+        totalTime: this.totalTime, totalHits: this.totalHits, lives: this.lives,
+        title: this.clearTitle(common.totalStars),
+        cardText: this.scoreCardText()
       });
     } else {
       this.sfx.win();

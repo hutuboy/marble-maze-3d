@@ -2,9 +2,9 @@ import { SceneView } from './scene.js';
 import { UI } from './ui.js';
 import { Sfx } from './audio.js';
 import { Game } from './game.js';
-import { LEVELS } from './levels.js';
 import { FixedClock, STEP, MAX_CATCHUP } from './clock.js';
 import { QualityController, QUALITY_LABELS } from './quality.js';
+import { cycleDifficulty, difficultyLabel, DIFFICULTIES } from './difficulty.js';
 
 const canvas = document.getElementById('scene');
 
@@ -40,6 +40,8 @@ function boot(view) {
   let drag = null;
   let motion = null;
   let contextLost = false;
+  let joy = null; // { id, dx, dz } 由虚拟摇杆驱动
+  const JOY_R = 44; // 归一化半径（像素）
 
   function fineMode() {
     return keys.has('ShiftLeft') || keys.has('ShiftRight');
@@ -121,9 +123,12 @@ function boot(view) {
     const scale = fine ? 0.42 : 1;
     const kb = keyboardAxis();
     const dragging = !!(drag && drag.mode === 'tilt');
-    const ma = dragging || kb.x || kb.z ? null : motionAxis();
+    const joyActive = !!joy && (joy.dx || joy.dz);
+    const ma = joyActive || dragging || kb.x || kb.z ? null : motionAxis();
 
-    if (ma) {
+    if (joyActive) {
+      game.setAxis(joy.dx * scale, joy.dz * scale);
+    } else if (ma) {
       game.setAxis(ma.x * scale, ma.z * scale);
     } else if (dragging) {
       game.setAxis(
@@ -134,6 +139,7 @@ function boot(view) {
       game.setAxis(kb.x * scale, kb.z * scale);
     }
     ui.setFineMode(fine);
+    ui.setDifficultyLabel(`难度 ${difficultyLabel(game.difficulty)}`, game.state !== 'menu');
   }
 
   // WebGL 上下文丢失：暂停游戏、跳过渲染、给出明确状态；恢复时重建程序化资源。
@@ -212,6 +218,35 @@ function boot(view) {
     view.zoomBy(Math.sign(e.deltaY) * 0.09);
   }, { passive: false });
 
+  const stick = document.getElementById('joystick');
+  const updateJoy = (e) => {
+    if (!joy) return;
+    const r = stick.getBoundingClientRect();
+    const dx = (e.clientX - (r.left + r.width / 2)) / JOY_R;
+    const dz = (e.clientY - (r.top + r.height / 2)) / JOY_R;
+    const len = Math.hypot(dx, dz);
+    const k = len > 1 ? 1 / len : 1;
+    joy.dx = dx * k;
+    joy.dz = dz * k;
+    ui.setJoystick(joy.dx, joy.dz);
+  };
+  const endJoy = (e) => {
+    if (!joy || (e && joy.id !== e.pointerId)) return;
+    joy = null;
+    ui.setJoystick(0, 0);
+  };
+  stick.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    sfx.ensure();
+    joy = { id: e.pointerId, dx: 0, dz: 0 };
+    try { stick.setPointerCapture(e.pointerId); } catch (_) { /* 忽略 */ }
+    updateJoy(e);
+  });
+  stick.addEventListener('pointermove', (e) => { if (joy && joy.id === e.pointerId) updateJoy(e); });
+  stick.addEventListener('pointerup', endJoy);
+  stick.addEventListener('pointercancel', endJoy);
+  stick.addEventListener('lostpointercapture', endJoy);
+
   window.addEventListener('blur', () => {
     keys.clear();
     touches.clear();
@@ -233,16 +268,44 @@ function boot(view) {
     ui.toast(label, 'info');
     sfx.click();
   });
+  document.getElementById('btnDifficulty').addEventListener('click', () => {
+    sfx.ensure();
+    const from = game.difficulty;
+    const to = cycleDifficulty(from);
+    if (game.setDifficulty(to)) ui.toast(`难度 · ${difficultyLabel(to)}`, 'info');
+    else ui.toast('难度只能在主菜单切换', 'warn');
+  });
   document.getElementById('mapToggle').addEventListener('click', () => ui.toggleMap());
+
+  async function copyScoreCard() {
+    const ta = document.getElementById('scoreCard');
+    const text = ta ? ta.value : game.scoreCardText();
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch (_) { /* file:// 或非安全上下文会拒绝，走手动复制 */ }
+    if (!ok && ta) {
+      try { ta.select(); ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    }
+    ui.toast(ok ? '成绩卡已复制' : '请手动选择成绩卡文本复制', ok ? 'good' : 'warn');
+    return ok;
+  }
 
   const ACTIONS = {
     start: () => game.start(),
     level: (ds) => game.startFrom(ds.level),
+    difficulty: (ds) => {
+      if (game.setDifficulty(ds.mode)) ui.toast(`难度 · ${difficultyLabel(ds.mode)}`, 'info');
+    },
     resume: () => game.resume(),
     restart: () => game.restartLevel(),
     retry: () => game.retry(),
     next: () => game.nextLevel(),
     again: () => game.start(),
+    'copy-card': () => copyScoreCard(),
     menu: () => game.toMenu()
   };
   document.getElementById('overlay').addEventListener('click', (e) => {
@@ -271,7 +334,7 @@ function boot(view) {
 
     if (game.state === 'playing') ui.pushTrail(game.marble.x, game.marble.z);
     if (!contextLost) view.update(raw, game.marble, { fall: game.fallProgress });
-    ui.drawTilt(game.marble.tiltX, game.marble.tiltZ, LEVELS[game.levelIndex].tiltMax, fineMode());
+    ui.drawTilt(game.marble.tiltX, game.marble.tiltZ, game.cfg.tiltMax, fineMode());
     if (frameNo % 2 === 0) ui.drawMinimap(game.level, game.marble, game.elapsed);
     frameNo += 1;
     requestAnimationFrame(frame);
@@ -283,6 +346,15 @@ function boot(view) {
   window.__marbleMaze = {
     game, view, ui, clock, quality, motionAxis, toggleMotion,
     handleContextLost, handleContextRestored, showUnsupported,
+    cycleDifficulty, copyScoreCard,
+    setJoystick: (dx, dz) => {
+      const len = Math.hypot(dx, dz);
+      const k = len > 1 ? 1 / len : 1;
+      joy = { id: -1, dx: dx * k, dz: dz * k };
+      ui.setJoystick(joy.dx, joy.dz);
+    },
+    clearJoystick: () => { joy = null; ui.setJoystick(0, 0); },
+    joystickAxis: () => joy ? { x: joy.dx, z: joy.dz } : null,
     isContextLost: () => contextLost
   };
   requestAnimationFrame(frame);

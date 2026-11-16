@@ -4,6 +4,8 @@ import { Records } from '../src/records.js';
 import { FixedClock, STEP, MAX_CATCHUP, MAX_STEPS } from '../src/clock.js';
 import { decideQuality, QualityController } from '../src/quality.js';
 import { minimapSize } from '../src/ui.js';
+import { DIFFICULTIES, DIFFICULTY_ORDER, effectiveConfig, cycleDifficulty } from '../src/difficulty.js';
+import { Game } from '../src/game.js';
 
 let passed = 0;
 let failed = 0;
@@ -231,6 +233,92 @@ console.log('小地图分辨率与一次性引导');
   check('非法 hint key 不被接受也不落盘',
     h.markHint('__proto__') === false
     && !Object.keys(JSON.parse(globalThis.localStorage._v).hints).includes('__proto__'));
+  delete globalThis.localStorage;
+}
+console.log('');
+
+console.log('难度档位与成绩卡');
+{
+  const cfg = LEVELS[2];
+  const std = effectiveConfig(cfg, 'standard');
+  const relaxed = effectiveConfig(cfg, 'relaxed');
+  const challenge = effectiveConfig(cfg, 'challenge');
+  check('标准档配置与原关卡逐值一致（零回归）',
+    std.gravity === cfg.gravity && std.tiltMax === cfg.tiltMax
+    && std.timeLimit === cfg.timeLimit && std.par === cfg.par
+    && DIFFICULTIES.standard.assist === false);
+  check('轻松档更慢更宽容、挑战档更快更紧',
+    relaxed.gravity < std.gravity && relaxed.timeLimit > std.timeLimit
+    && relaxed.tiltMax < std.tiltMax && relaxed.par > std.par
+    && challenge.gravity > std.gravity && challenge.timeLimit < std.timeLimit
+    && challenge.tiltMax > std.tiltMax && challenge.par < std.par,
+    `重力 ${relaxed.gravity.toFixed(2)}/${std.gravity}/${challenge.gravity.toFixed(2)}`);
+  check('难度循环 standard→relaxed→challenge→standard',
+    cycleDifficulty('standard') === 'relaxed'
+    && cycleDifficulty('relaxed') === 'challenge'
+    && cycleDifficulty('challenge') === 'standard'
+    && DIFFICULTY_ORDER.length === 3);
+  check('难度只改手感参数，不改迷宫种子与尺寸',
+    std.seed === cfg.seed && relaxed.seed === cfg.seed
+    && relaxed.cols === cfg.cols && relaxed.rows === cfg.rows);
+
+  globalThis.localStorage = {
+    _v: '{}',
+    getItem() { return this._v; },
+    setItem(_k, v) { this._v = v; }
+  };
+  const r = new Records();
+  r.setDifficulty('relaxed');
+  r.submit(1, { time: 40, score: 800, stars: 2, mode: 'relaxed' });
+  r.submit(1, { time: 25, score: 950, stars: 3, mode: 'standard' });
+  check('辅助档成绩按档位分键，互不覆盖',
+    r.best(1, 'relaxed').time === 40 && r.best(1, 'standard').time === 25
+    && r.data.best['1:relaxed'].score === 800 && r.data.best['1'].score === 950
+    && r.totalStars === 3 && r.starsForMode('relaxed') === 2,
+    `标准 ${r.data.best['1'].score} / 轻松 ${r.data.best['1:relaxed'].score}`);
+  check('难度档位写入存档并在重建后保留',
+    new Records().difficulty === 'relaxed');
+  r.setDifficulty('challenge');
+  check('setDifficulty 拒绝非法值且不改当前档',
+    r.setDifficulty('godmode') === false && r.difficulty === 'challenge');
+  delete globalThis.localStorage;
+
+  globalThis.localStorage = {
+    _v: JSON.stringify({ difficulty: 'godmode', best: { '1:godmode': { time: 1, score: 1, stars: 1 } } }),
+    getItem() { return this._v; },
+    setItem(_k, v) { this._v = v; }
+  };
+  const dirtyD = new Records();
+  check('脏难度档回退标准，非法分键成绩被清洗',
+    dirtyD.difficulty === 'standard' && Object.keys(dirtyD.data.best).length === 0);
+  delete globalThis.localStorage;
+
+  // 成绩卡称号与文本：用最小 stub 构造 Game，只读取纯逻辑输出。
+  globalThis.localStorage = {
+    _v: '{}', getItem() { return this._v; }, setItem(_k, v) { this._v = v; }
+  };
+  const noop = () => {};
+  const stubView = {
+    buildLevel: noop, setGemsVisible: noop, setCheckpointsActive: noop, burstGoal: noop
+  };
+  const stubUi = {
+    showOverlay: noop, setStatus: noop, setTip: noop, setPauseLabel: noop,
+    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop
+  };
+  const stubSfx = { click: noop, win: noop, clearAll: noop };
+  const g = new Game(stubView, stubUi, stubSfx);
+  check('全通关称号按星级分档',
+    g.clearTitle(9) === '迷宫大师' && g.clearTitle(7) === '弹珠专家'
+    && g.clearTitle(5) === '熟练探险家' && g.clearTitle(1) === '初出茅庐');
+  g.setDifficulty('relaxed');
+  check('辅助档称号带档位标注', g.clearTitle(9).includes('轻松档') && g.assistMode === true);
+  check('成绩卡文本含三关回顾与合计行',
+    (() => {
+      const card = g.scoreCardText();
+      return card.includes('3D 弹珠迷宫 · 全通关')
+        && card.includes('第1关') && card.includes('第2关') && card.includes('第3关')
+        && card.includes('累计') && card.includes('轻松档');
+    })());
   delete globalThis.localStorage;
 }
 console.log('');

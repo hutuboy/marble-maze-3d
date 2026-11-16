@@ -121,6 +121,21 @@ try {
   })()`);
   await sleep(1700);
   await shot('shot-level3.png');
+
+  await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    // 取证用：给三关写入示例最佳成绩，让全通关页展示完整的逐关回顾。
+    [1, 2, 3].forEach((id) => g.records.submit(id, {
+      time: 12 + id * 6, score: 900 + id * 70, stars: 3 - (id === 2 ? 1 : 0), mode: 'standard'
+    }));
+    g.score = 3988;
+    g.totalTime = 96;
+    g.marble.x = g.level.goal.x; g.marble.z = g.level.goal.z;
+    g.clearLevel();
+    return true;
+  })()`);
+  await sleep(800);
+  await shot('shot-gameclear.png');
 } finally {
   if (ws) ws.close();
   if (edge) edge.kill();

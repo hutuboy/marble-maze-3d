@@ -126,7 +126,20 @@ async function main() {
     source: `try { localStorage.removeItem('marble-maze-3d.records.v1'); } catch (_) {}`
   });
   await send('Page.reload', { ignoreCache: true });
-  await sleep(2600);
+  // 慢速 swiftshader 下 2.6 秒偶尔不够，轮询到 hook 就绪再开始断言。
+  let bootReady = false;
+  for (let i = 0; i < 40 && !bootReady; i++) {
+    try {
+      const probe = await send('Runtime.evaluate', {
+        expression: '!!(window.__marbleMaze && window.__marbleMaze.game)',
+        returnByValue: true
+      });
+      bootReady = probe.result.value === true;
+    } catch (_) { /* 等待就绪 */ }
+    if (!bootReady) await sleep(250);
+  }
+  if (!bootReady) throw new Error('页面脚本未就绪，无法验证');
+  await sleep(400);
 
   console.log('3D 弹珠迷宫 · 浏览器运行验证\n');
 
@@ -161,6 +174,10 @@ async function main() {
       qualityLevel: window.__marbleMaze.quality.level,
       qualityStats: window.__marbleMaze.view.stats(),
       staticDraws: window.__marbleMaze.ui.staticDraws,
+      difficulty: window.__marbleMaze.game.difficulty,
+      difficultyBtn: document.getElementById('btnDifficulty').textContent,
+      difficultyChips: document.querySelectorAll('#modal [data-action="difficulty"]').length,
+      joystick: !!document.getElementById('joystick'),
       mmSize: document.getElementById('minimap').width,
       goalBeam: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeam),
       goalBeacon: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeacon),
@@ -191,6 +208,10 @@ async function main() {
     init.goalBeam && init.goalBeacon && init.goalToneMapped === false,
     `光柱 ${init.goalBeam} / 信标 ${init.goalBeacon} / toneMapped ${init.goalToneMapped}`);
   check('第 1 关小地图逻辑分辨率为 220px', init.mmSize === 220, `${init.mmSize}px`);
+  check('难度按钮与菜单三档选择器就位',
+    init.difficulty === 'standard' && init.difficultyBtn.includes('标准')
+    && init.difficultyChips === 3 && init.joystick,
+    `${init.difficultyBtn} / ${init.difficultyChips} 档 / 摇杆 ${init.joystick}`);
   check('菜单提供 3 个选关卡片且初始仅第 1 关解锁',
     init.levelCards === 3 && init.unlockedCards === 1,
     `${init.levelCards} 张卡 / ${init.unlockedCards} 张可选`);
@@ -240,6 +261,50 @@ async function main() {
   check('切关时静态层按 level 引用与尺寸失效并重建',
     cacheProbe.afterSwitch === cacheProbe.steady + 3,
     `${cacheProbe.steady} → ${cacheProbe.afterSwitch}`);
+
+  const diffProbe = await evalJS(`(async () => {
+    const h = window.__marbleMaze;
+    const g = h.game;
+    const std = { gravity: g.cfg.gravity, tilt: g.cfg.tiltMax };
+    document.querySelector('#modal [data-action="difficulty"][data-mode="relaxed"]').click();
+    await new Promise((r) => setTimeout(r, 200));
+    const relaxed = { gravity: g.cfg.gravity, tilt: g.cfg.tiltMax, mode: g.difficulty,
+      label: document.getElementById('btnDifficulty').textContent,
+      assist: !!document.querySelector('#modal .difficulty-row em') };
+    const stored = JSON.parse(localStorage.getItem('marble-maze-3d.records.v1') || '{}').difficulty;
+    document.querySelector('#modal [data-action="difficulty"][data-mode="standard"]').click();
+    await new Promise((r) => setTimeout(r, 200));
+    const back = { mode: g.difficulty, gravity: g.cfg.gravity, tilt: g.cfg.tiltMax };
+    return { std, relaxed, stored, back };
+  })()`);
+  check('菜单切难度立即改变有效物理参数并持久化',
+    diffProbe.relaxed.mode === 'relaxed'
+    && diffProbe.relaxed.gravity < diffProbe.std.gravity
+    && diffProbe.relaxed.tilt < diffProbe.std.tilt
+    && diffProbe.relaxed.assist && diffProbe.stored === 'relaxed'
+    && diffProbe.relaxed.label.includes('轻松'),
+    `重力 ${diffProbe.std.gravity} → ${diffProbe.relaxed.gravity} / 存档 ${diffProbe.stored}`);
+  check('切回标准档参数完全复原（后续断言零污染）',
+    diffProbe.back.mode === 'standard'
+    && diffProbe.back.gravity === diffProbe.std.gravity
+    && diffProbe.back.tilt === diffProbe.std.tilt);
+  const playLock = await evalJS(`(async () => {
+    const h = window.__marbleMaze;
+    h.game.start();
+    const btn = document.getElementById('btnDifficulty');
+    for (let i = 0; i < 30 && !btn.disabled; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+    }
+    const before = h.game.difficulty;
+    const changed = h.game.setDifficulty('challenge');
+    const disabled = document.getElementById('btnDifficulty').disabled;
+    h.game.toMenu();
+    return { before, changed, after: h.game.difficulty, disabledInPlay: disabled };
+  })()`);
+  check('难度只能在菜单切换，游玩中拒绝并显示禁用态',
+    playLock.changed === false && playLock.after === 'standard'
+    && playLock.disabledInPlay === true,
+    JSON.stringify(playLock));
 
   await ensurePlaying();
   if ((await evalJS('window.__marbleMaze.game.state')) === 'menu') await tap('Enter', 'Enter', 13);
@@ -599,6 +664,56 @@ async function main() {
   check('通关终点粒子可触发', particles.has && particles.n > 20 && particles.life > 0,
     `${particles.n} 个粒子`);
 
+  const clearPage = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    const g = h.game;
+    // 直接触发最后一关结算，检查全通关页结构。
+    g.marble.x = g.level.goal.x; g.marble.z = g.level.goal.z;
+    g.clearLevel();
+    const modal = document.getElementById('modal');
+    return {
+      state: g.state,
+      title: modal.querySelector('.clear-title') ? modal.querySelector('.clear-title').innerText : '',
+      rows: modal.querySelectorAll('.review-row').length,
+      cardLen: modal.querySelector('#scoreCard') ? modal.querySelector('#scoreCard').value.length : 0,
+      hasCopy: !!modal.querySelector('[data-action="copy-card"]')
+    };
+  })()`);
+  check('全通关页显示称号、三关回顾与成绩卡',
+    clearPage.state === 'gameclear' && clearPage.title.length > 0
+    && clearPage.rows === 3 && clearPage.cardLen > 40 && clearPage.hasCopy,
+    `称号「${clearPage.title}」/ ${clearPage.rows} 关回顾 / 卡片 ${clearPage.cardLen} 字`);
+  const clearVisible = await evalJS(`(() => {
+    const m = document.getElementById('modal');
+    const btns = m.querySelectorAll('.modal-btns button');
+    const last = btns[btns.length - 1];
+    return {
+      scroll: m.scrollHeight, client: m.clientHeight,
+      btnBottom: last ? last.getBoundingClientRect().bottom : 0,
+      modalBottom: m.getBoundingClientRect().bottom
+    };
+  })()`);
+  check('全通关页按钮在弹窗内完整可见，无需滚动',
+    clearVisible.btnBottom <= clearVisible.modalBottom + 2,
+    `按钮底 ${clearVisible.btnBottom.toFixed(0)} / 弹窗底 ${clearVisible.modalBottom.toFixed(0)}`
+    + ` / 内容 ${clearVisible.scroll}px`);
+  const copied = await evalJS(`(async () => {
+    const h = window.__marbleMaze;
+    let captured = '';
+    if (navigator.clipboard) {
+      try {
+        const orig = navigator.clipboard.writeText;
+        navigator.clipboard.writeText = (t) => { captured = t; return Promise.resolve(); };
+        await h.copyScoreCard();
+        navigator.clipboard.writeText = orig;
+      } catch (_) { /* 用回退路径 */ }
+    }
+    return { captured, toast: document.getElementById('toast').textContent };
+  })()`);
+  check('复制成绩卡可写出文本并给出反馈',
+    copied.captured.includes('3D 弹珠迷宫') && copied.toast.includes('复制'),
+    `捕获 ${copied.captured.length} 字 / 提示「${copied.toast}」`);
+
   const camL3 = await evalJS(`({
     d: window.__marbleMaze.view.camera.position.length(),
     span: window.__marbleMaze.view.span,
@@ -607,6 +722,8 @@ async function main() {
   const camBase = camL3.span * 1.15 + 5.5;
   check('大关卡相机自动拉远以避让 HUD', camL3.level === 2 && camL3.d > camBase * 1.10,
     `dist ${camL3.d.toFixed(1)} > 基线 ${camBase.toFixed(1)} × 1.10`);
+  // 全通关弹窗把状态留在 gameclear，后续上下文丢失断言要求 playing。
+  await evalJS(`window.__marbleMaze.game.state = 'playing'`);
 
   const qProbe = await evalJS(`(() => {
     const h = window.__marbleMaze;
@@ -707,6 +824,31 @@ async function main() {
   check('触屏双指拖动可旋转观察视角',
     Math.abs(touchOrbit.delta - 0.3) < 0.02,
     `yaw ${touchOrbit.yaw0.toFixed(2)} -> ${touchOrbit.yaw1.toFixed(2)}`);
+
+  const joyProbe = await evalJS(`(() => {
+    const h = window.__marbleMaze;
+    h.game.setAxis(0, 0);
+    h.setJoystick(1, -0.5);
+    const injected = h.joystickAxis();
+    // 让主循环跑几帧，axis 应由摇杆接管。
+    return new Promise((resolve) => setTimeout(() => {
+      const axis = { x: h.game.axis.x, z: h.game.axis.z };
+      const knob = document.getElementById('joystickKnob').style.transform;
+      const active = document.getElementById('joystick').classList.contains('active');
+      h.clearJoystick();
+      resolve({ injected, axis, knob, active, cleared: h.joystickAxis() });
+    }, 220));
+  })()`);
+  // setJoystick(1,-0.5) 会被限制在单位圆内：长度 1/√1.25≈0.894，方向不变。
+  const jl = Math.hypot(1, 0.5);
+  const jx = 1 / jl;
+  const jz = -0.5 / jl;
+  check('虚拟摇杆接管倾斜轴并同步旋钮位置',
+    Math.abs(joyProbe.injected.x - jx) < 0.02 && Math.abs(joyProbe.injected.z - jz) < 0.02
+    && Math.abs(joyProbe.axis.x - jx) < 0.05 && Math.abs(joyProbe.axis.z - jz) < 0.05
+    && joyProbe.knob.includes('translate') && joyProbe.active === true
+    && joyProbe.cleared === null,
+    `axis (${joyProbe.axis.x.toFixed(2)}, ${joyProbe.axis.z.toFixed(2)}) / 旋钮 ${joyProbe.knob}`);
 
   const motionProbe = await evalJS(`(async () => {
     const h = window.__marbleMaze;
