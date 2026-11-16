@@ -9,3 +9,11 @@
 安全：`MODELSCOPE_API_KEY` 只作为创空间 **secret** 注入，不写进代码、不进入公开仓库。
 
 本地游戏仍是纯静态、双击即玩的；本目录只服务于线上参赛版本。
+
+## 换行符约定
+
+静态件必须以 **LF** 提交。Windows 上 `core.autocrlf=true` 会把 `game.bundle.js`
+连同 CRLF 一起写进 blob，容器检出的文件字节数会比本地多（每行 +1 字节），
+线上 `sha256` 就对不上本地构建。同步到创空间仓库前先
+`git config core.autocrlf false`，再用 `git ls-files --eol` 确认是 `i/lf`。
+
