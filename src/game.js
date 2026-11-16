@@ -418,6 +418,8 @@ export class Game {
   }
 
   advance() {
+    // 菜单里还开着 AI 实验室这类二级弹窗时，回车/空格不该直接开局。
+    if (this.state === STATE.MENU && this.ui.overlayType === 'ailab') return;
     switch (this.state) {
       case STATE.MENU: this.start(); break;
       case STATE.PAUSED: this.resume(); break;

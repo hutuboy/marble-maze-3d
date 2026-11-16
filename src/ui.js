@@ -511,7 +511,7 @@ const OVERLAY_HTML = {
       <label class="ai-label" for="aiPrompt">关卡设计师 · 描述难度与机制</label>
       <textarea class="ai-input" id="aiPrompt" rows="3" placeholder="例如：难一点，有熔岩和冰面，多加加速带和检查点">${d.prompt || ''}</textarea>
       <button class="primary-btn ai-run" data-action="ai-design" id="aiDesignBtn">生成并开玩</button>
-      <div class="ai-status" id="aiStatus">${d.status || '提示：离线时会使用本地规则引擎，同样可玩。'}</div>
+      <div class="ai-status" id="aiStatus">${d.status || 'Ctrl / ⌘ + Enter 可直接生成；离线时使用本地规则引擎，同样可玩。'}</div>
       <label class="ai-label" for="aiTheme">叙事主题 · 给关卡起个名字</label>
       <input class="ai-input" id="aiTheme" type="text" placeholder="例如：冰天雪地 / 熔岩深渊" value="${d.theme || ''}">
       <button class="ghost-btn ai-run" data-action="ai-narrative">生成主题</button>

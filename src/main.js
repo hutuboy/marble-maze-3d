@@ -35,6 +35,7 @@ function boot(view) {
   ]);
   const BLOCK_CODES = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
   const FINE_CODES = new Set(['ShiftLeft', 'ShiftRight']);
+  const NATIVE_CODES = new Set(['Space', 'Enter']);
   const MOTION_DEAD = 28;
 
   let drag = null;
@@ -45,6 +46,21 @@ function boot(view) {
 
   function fineMode() {
     return keys.has('ShiftLeft') || keys.has('ShiftRight');
+  }
+
+  // 焦点在输入类元素上时，空格/方向键/回车都属于文本编辑，不能被游戏快捷键抢走。
+  function isTypingTarget(el) {
+    if (!el || typeof el.tagName !== 'string') return false;
+    const tag = el.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'OPTION') return true;
+    return el.isContentEditable === true;
+  }
+
+  // 按钮/链接被聚焦时，空格与回车交给浏览器原生激活，避免和 advance() 撞成两次动作。
+  function isActivatable(el) {
+    if (!el || typeof el.tagName !== 'string') return false;
+    const tag = el.tagName;
+    return tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY';
   }
 
   function keyboardAxis() {
@@ -163,10 +179,18 @@ function boot(view) {
   canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
 
   window.addEventListener('keydown', (e) => {
-    if (BLOCK_CODES.has(e.code)) e.preventDefault();
+    // 在 AI 提示词等输入框里打字时直接放行：既不 preventDefault（否则空格被吞），
+    // 也不响应 P/R/M/空格/回车等快捷键（否则回车会触发 advance() 把弹窗关掉并直接开局）。
+    if (isTypingTarget(e.target)) {
+      if (keys.size) keys.clear();
+      sfx.ensure();
+      return;
+    }
+    const nativeActivate = NATIVE_CODES.has(e.code) && isActivatable(e.target);
+    if (!nativeActivate && BLOCK_CODES.has(e.code)) e.preventDefault();
     sfx.ensure();
     if (MOVE_CODES.has(e.code) || FINE_CODES.has(e.code)) keys.add(e.code);
-    if (e.repeat) return;
+    if (e.repeat || nativeActivate) return;
     switch (e.code) {
       case 'KeyP':
       case 'Escape': game.togglePause(); break;
@@ -346,6 +370,15 @@ function boot(view) {
     sfx.ensure();
     const fn = ACTIONS[btn.dataset.action];
     if (fn) fn(btn.dataset);
+  });
+
+  // AI 输入框里普通回车只换行，Ctrl/Cmd + Enter 才提交，避免误触直接开局。
+  document.getElementById('overlay').addEventListener('keydown', (e) => {
+    if (!isTypingTarget(e.target)) return;
+    if (e.code !== 'Enter' || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (e.target.id === 'aiPrompt') runAIDesign();
+    else if (e.target.id === 'aiTheme') runAINarrative();
   });
 
   const clock = new FixedClock();

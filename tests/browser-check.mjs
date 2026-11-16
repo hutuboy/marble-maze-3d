@@ -555,6 +555,70 @@ async function main() {
     picked && pickedState.level === 1 && pickedState.score === 0,
     `第 ${pickedState.level + 1} 关 / 总分 ${pickedState.score}`);
 
+  // AI 实验室：输入框里打字归文本编辑，不能被游戏快捷键抢走
+  // （回归用例：空格被 preventDefault 吞掉、回车触发 advance() 把弹窗关掉并直接开局）
+  await evalJS(`window.__marbleMaze.game.toMenu()`);
+  await sleep(150);
+  await evalJS(`document.querySelector('#modal [data-action="ai-lab"]').click()`);
+  const labOpen = await waitFor(`window.__marbleMaze.ui.overlayType === 'ailab'`, 2500, false);
+  await evalJS(`(() => { const el = document.getElementById('aiPrompt'); el.focus(); return document.activeElement.id; })()`);
+  const typeChar = async (ch) => {
+    const code = ch === ' ' ? 'Space' : `Key${ch.toUpperCase()}`;
+    const vk = ch === ' ' ? 32 : ch.toUpperCase().charCodeAt(0);
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyDown', key: ch, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+      text: ch, unmodifiedText: ch
+    });
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyUp', key: ch, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk
+    });
+  };
+  for (const ch of ['n', 'a', ' ', 'd']) await typeChar(ch);
+  const typed = await evalJS(`({
+    state: window.__marbleMaze.game.state,
+    overlay: window.__marbleMaze.ui.overlayType,
+    visible: document.getElementById('overlay').classList.contains('visible'),
+    value: document.getElementById('aiPrompt').value
+  })`);
+  check('AI 输入框内空格不被吞、弹窗不关闭、状态不跳转',
+    labOpen && typed.state === 'menu' && typed.overlay === 'ailab' && typed.visible && typed.value === 'na d',
+    `输入值「${typed.value}」/ ${typed.state} / 弹窗 ${typed.visible}`);
+
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r'
+  });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13
+  });
+  await sleep(150);
+  const afterEnter = await evalJS(`({
+    state: window.__marbleMaze.game.state,
+    overlay: window.__marbleMaze.ui.overlayType,
+    lines: document.getElementById('aiPrompt').value.split('\\n').length
+  })`);
+  check('AI 输入框内回车只换行，不触发开局',
+    afterEnter.state === 'menu' && afterEnter.overlay === 'ailab' && afterEnter.lines === 2,
+    `${afterEnter.state} / ${afterEnter.lines} 行`);
+
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+    modifiers: 2, text: '\r'
+  });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 2
+  });
+  const designed = await waitFor(`window.__marbleMaze.game.state === 'playing'`, 6000, false);
+  const lab = await evalJS(`({
+    state: window.__marbleMaze.game.state,
+    name: window.__marbleMaze.game.aiLevel ? window.__marbleMaze.game.aiLevel.name : '',
+    overlay: document.getElementById('overlay').className
+  })`);
+  check('Ctrl + Enter 一键生成并开玩定制关卡',
+    designed && lab.state === 'playing' && !!lab.name && !lab.overlay.includes('visible'),
+    `${lab.name} / ${lab.state}`);
+  await evalJS(`window.__marbleMaze.game.toMenu()`);
+  await sleep(200);
+
   await sleep(200);
   const httpErrors = errors.length;
   check('HTTP 模式下控制台无错误', httpErrors === 0, errors.slice(0, 2).join(' | ') || '无');
