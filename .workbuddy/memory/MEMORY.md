@@ -38,3 +38,9 @@
 ## P5 约束（2026-11-16）
 - 机制音效在 `Game.handleEvents()` 走 `Sfx.checkpoint()/boost()/ice()`，不要退回 `pickup()/bump()`；冰面只在 `!wasOnIce` 的进入沿播放。`Sfx.ensure()` 用 `globalThis.AudioContext` 以便无 WebAudio 环境静默降级；新增音色要补浏览器 spy 断言。
 - 生涯统计存 `Records.data.stats = { clears, playTime }`：新增字段必须同步默认值、`sanitizeStats()`、构造读取三处。时长只能 `addPlayTime()` 累积，由 `flush()` / `Game.flushStats()` 在每 5 秒及暂停/通关/失败/回菜单落盘，禁止每帧 `save()`；通关计数在 `clearLevel()` 每次 +1（`addClear()` 自带落盘）。菜单统计内联在「选择关卡」标题行，不新增弹窗块，改文案要重跑菜单完整可见与菜单统计两条浏览器断言。
+
+## P6 参赛版约束（2026-11-16）
+- AI 能力集中在 `src/ai.js` + `studio/app.py`。**token 绝不进前端/仓库**：只在创空间 secret `MODELSCOPE_API_KEY`，前端靠后端注入的 `__MARBLE_AI_ENABLED__` 决定是否发请求；本地 `file://`/HTTP 不发请求（否则 404/CORS 破坏零错误断言）。改 AI 端点要同步 `SYSTEMS`（后端 prompt）与 `ai.js` 的 `call()`。
+- AI 生成的关卡必须经过 `sanitizeLevelInput`（数值钳制）→ `validateLevelInput`（buildLevel + BFS 可解性）才能加载；模型输出用 `extractJSON` 容错围栏。新增 AI 功能必须保留本地规则引擎降级路径，否则离线双击会坏。
+- `studio/` 是创空间部署源（docker, 端口 7860）。推送后必须删除 `studio/.git`（remote URL 含 token），`.gitignore` 排除 `studio/.git/`。线上 `.ms.show` 直连**不要带** SDK token 头，否则 403。
+- 当前线上：https://www.modelscope.cn/studios/hutuboy/marble-maze-ai （host `hutuboy-marble-maze-ai.ms.show`）。仓库已 public，创作手记在根目录 `创作手记.md`。更新线上要先 `npm run build` → 同步 4 个静态件到 `studio/` → 推送创空间 → 回读 bundle SHA 比对。
