@@ -549,7 +549,7 @@ const OVERLAY_HTML = {
   levelclear: (d) => `
     <div class="modal-tag success">LEVEL CLEAR</div>
     <h1>第 ${d.levelIndex + 1} 关通过</h1>
-    <p class="modal-lead">${d.name}　·　用时 ${fmtTime(d.elapsed)}</p>
+    <p class="modal-lead">${d.name}　·　用时 ${fmtTime(d.elapsed)}${d.custom ? '　·　自定义关卡，不计入主线成绩' : ''}</p>
     ${starsHTML(d.stars)}
     ${recordBadge(d.rec)}
     <div class="stars-row">累计星级 <b>${d.totalStars}</b> / ${d.maxStars}</div>
@@ -564,14 +564,15 @@ const OVERLAY_HTML = {
     ])}
     ${d.aiPraise ? `<div class="ai-praise">${d.aiPraise}</div>` : ''}
     <div class="ai-coach" id="aiCoach"></div>
-    ${d.custom ? '<div class="modal-section-title">自定义关卡 · 不计入主线星级与最佳成绩</div>' : ''}
-    ${d.shareCode ? `<div class="share-line">分享码 <b>${d.shareCode}</b></div>` : ''}
     ${d.custom
       ? `<div class="modal-btns">
           <button class="primary-btn" data-action="menu">返回主菜单 <span>↵</span></button>
           ${d.shareCode ? '<button class="ghost-btn" data-action="copy-share">复制分享链接</button>' : ''}
         </div>`
-      : `<button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`}`,
+      : `<button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`}
+    ${d.shareCode
+      ? `<details class="share-line"><summary>分享码 · 手动复制</summary><b>${d.shareCode}</b></details>`
+      : ''}`,
 
   gameclear: (d) => `
     <div class="modal-tag success">ALL CLEAR</div>

@@ -4286,7 +4286,7 @@ void main() {
     </div>`,levelclear:n=>`
     <div class="modal-tag success">LEVEL CLEAR</div>
     <h1>\u7B2C ${n.levelIndex+1} \u5173\u901A\u8FC7</h1>
-    <p class="modal-lead">${n.name}\u3000\xB7\u3000\u7528\u65F6 ${_i(n.elapsed)}</p>
+    <p class="modal-lead">${n.name}\u3000\xB7\u3000\u7528\u65F6 ${_i(n.elapsed)}${n.custom?"\u3000\xB7\u3000\u81EA\u5B9A\u4E49\u5173\u5361\uFF0C\u4E0D\u8BA1\u5165\u4E3B\u7EBF\u6210\u7EE9":""}</p>
     ${Ku(n.stars)}
     ${Qu(n.rec)}
     <div class="stars-row">\u7D2F\u8BA1\u661F\u7EA7 <b>${n.totalStars}</b> / ${n.maxStars}</div>
@@ -4294,12 +4294,11 @@ void main() {
     ${xr([["\u7528\u65F6",_i(n.elapsed)],["\u78B0\u649E",n.hits],["\u5B9D\u77F3",`${n.gemsGot} / ${n.gemsTotal}`],["\u672C\u5173\u7ED3\u7B97",`+${n.levelScore}`],["\u7D2F\u8BA1\u603B\u5206",n.score],["\u6700\u4F73\u7528\u65F6",n.best?_i(n.best.time):"\u2014"]])}
     ${n.aiPraise?`<div class="ai-praise">${n.aiPraise}</div>`:""}
     <div class="ai-coach" id="aiCoach"></div>
-    ${n.custom?'<div class="modal-section-title">\u81EA\u5B9A\u4E49\u5173\u5361 \xB7 \u4E0D\u8BA1\u5165\u4E3B\u7EBF\u661F\u7EA7\u4E0E\u6700\u4F73\u6210\u7EE9</div>':""}
-    ${n.shareCode?`<div class="share-line">\u5206\u4EAB\u7801 <b>${n.shareCode}</b></div>`:""}
     ${n.custom?`<div class="modal-btns">
           <button class="primary-btn" data-action="menu">\u8FD4\u56DE\u4E3B\u83DC\u5355 <span>\u21B5</span></button>
           ${n.shareCode?'<button class="ghost-btn" data-action="copy-share">\u590D\u5236\u5206\u4EAB\u94FE\u63A5</button>':""}
-        </div>`:`<button class="primary-btn" data-action="next">\u8FDB\u5165\u7B2C ${n.levelIndex+2} \u5173 <span>\u21B5</span></button>`}`,gameclear:n=>`
+        </div>`:`<button class="primary-btn" data-action="next">\u8FDB\u5165\u7B2C ${n.levelIndex+2} \u5173 <span>\u21B5</span></button>`}
+    ${n.shareCode?`<details class="share-line"><summary>\u5206\u4EAB\u7801 \xB7 \u624B\u52A8\u590D\u5236</summary><b>${n.shareCode}</b></details>`:""}`,gameclear:n=>`
     <div class="modal-tag success">ALL CLEAR</div>
     <h1>\u5168\u90E8\u901A\u5173</h1>
     <p class="modal-lead">\u4E09\u5EA7\u8FF7\u5BAB\u5168\u90E8\u8D70\u5B8C\uFF0C\u5F39\u73E0\u7A33\u7A33\u843D\u5730\u3002</p>

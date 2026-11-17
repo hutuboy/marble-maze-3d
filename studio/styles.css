@@ -566,15 +566,27 @@ kbd {
 .ai-coach-live .ai-coach-row { font-size: 11.5px; }
 .ai-coach-wait { font-size: 11px; color: #7f95a8; }
 
-/* 分享码：等宽短码，剪贴板不可用时用户仍能手动选中复制。 */
-.share-line {
-  margin: 6px 0 2px;
+/* 分享码：默认收起成一行，剪贴板不可用时展开即可手动选中复制。 */
+.share-line { margin: 10px 0 0; font-size: 10.5px; color: #7f95a8; text-align: left; }
+.share-line summary {
+  cursor: pointer;
+  color: #8fa8bd;
+  list-style: none;
+  outline: none;
+}
+.share-line summary::-webkit-details-marker { display: none; }
+.share-line summary::before { content: '▸ '; }
+.share-line[open] summary::before { content: '▾ '; }
+.share-line summary:hover { color: #a9c6dd; }
+.share-line b {
+  display: block;
+  margin-top: 4px;
   font: 10.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #7f95a8;
+  color: #a9c6dd;
+  font-weight: 500;
   word-break: break-all;
   user-select: all;
 }
-.share-line b { color: #a9c6dd; font-weight: 500; }
 
 /* 尊重系统的「减少动态效果」：关掉闪白与震屏，其余过渡降到近乎瞬时。 */
 @media (prefers-reduced-motion: reduce) {
