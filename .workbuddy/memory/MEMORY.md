@@ -7,7 +7,7 @@
 - 渲染：Three.js 0.187.0，打包为 IIFE；不使用 ESM importmap（避免 file:// 的 CORS 限制）。
 - 物理：自研确定性 2.5D 求解，球在迷宫局部平面运动、板整体倾斜；不用 cannon/rapier，便于严格保证不穿墙。
 - 资源：所有纹理、环境贴图、音效运行时程序化生成。
-- 验证：`npm test`（纯 Node 逻辑/物理，95 项）、`npm run test:browser`（无头 Edge CDP，85 项，含 file:// 模式）、`npm run shots`（实拍截图）。
+- 验证：`npm test`（纯 Node 逻辑/物理，144 项）、`npm run test:browser`（无头 Edge CDP，104 项，含 file:// 模式）、`npm run shots`（实拍截图，含每日挑战与 AI 演示取证）。
 
 ## 维护注意
 - 倾斜采用嵌套 Group（外 z / 内 x），物理公式与之一一对应，见 2026-11-07 日志。
@@ -51,6 +51,14 @@
 - **创空间仓库必须 LF**：Windows `core.autocrlf=true` 会把 `game.bundle.js` 以 CRLF 写进 blob，容器检出的字节数每行 +1（4334 行 → +4334 字节），线上 sha256 永远对不上本地。同步前 `git config core.autocrlf false core.eol lf`，用 `git ls-files --eol` 校验全为 `i/lf`，再用 `git cat-file -p HEAD:game.bundle.js | sha256sum` 与本地比对。
 - 线上行为验证别指望浏览器：`www.modelscope.cn/studios/...?mode=full` 外壳页把游戏放在 iframe 里，本机 CDP 拿不到该 frame 的 context（frameTree 只有顶层）；直连 `.ms.show` 也会被 302 到外壳页。可靠做法是「线上 bundle SHA == 本地 SHA + 本地浏览器全量用例」。
 - `studio/app.py` 的 `Server.handle_error` 已忽略 ConnectionReset/BrokenPipe/ConnectionAborted（前端 8s AbortController 到点必然触发），别再改回默认。
+
+## v1.4 赛事口径与约束（2026-11-17）
+- **评分口径修正**：官方活动页对「AI 游戏作品」赛道的评审维度是 **可玩性 30 / AI 运用 25 / 作品完成度 20 / 创意与呈现 15 / 创作手记 10**；旧笔记里「实用价值30/AI能力25/工程25/开源10/手记10」是「AI 原生工具/Agent」赛道口径，本作品按游戏赛道评审。单项奖可冲：最佳 AI 原生玩法 / 最佳 Agent 工程实践 / 最佳创新创意；人气奖按创空间点赞前 5。提交硬门槛：报名帖（小红书等公开平台）+ 创空间可试玩 + 手记发布到魔搭开发者实践（附演示视频）+ 工具使用记录截图。截止 12/01 12:00 报名 / 18:00 提交。
+- **v1.4 已实现**：自动试玩 Agent（`src/autopilot.js`，Node/浏览器共用）+ 游戏内 AI 演示（`startDemo/stopDemo/finishDemo`，仅定制关卡）+ 教练反馈闭环（`coachFollowUp` 快照 → `buildTelemetry` 附 `improvement` 只下发一次，localCoach 与 app.py prompt 同步「先验证再建议」契约）+ 每日挑战（`dailyConfig()` FNV 日期种子，id 8000，走 custom 分支 + `records.submitDaily()` 按日期分键保留 30 天）+ 成绩卡每日行与结算页「看 AI 演示」。
+- **Autopilot trace 必须全精度**：轴值舍入（哪怕 3 位小数）会在反馈控制中逐帧累积，L3 冰面/加速带回放发散；改控制律后重跑三关 `replayTrace` 断言（`rp.ok && rp.steps === r.steps`）。
+- **演示模式约束**：`game.demo` 时不 `addPlayTime`、不采样 tilt、时限到不扣命；演示通关走 `finishDemo()`（toast + 回起点）不走 `clearLevel()`；玩家接管靠 `setAxis(x,z,human=true)`，main.js 四处键盘/摇杆/体感/鼠标输入都已传 true，新增输入源别漏。Game stub 必须补 `setDemoVisible` noop，否则 loadLevel/loadConfigured 报 TypeError。
+- **弹窗高度预算再次收紧**：每日入口做成紧凑单行 `.daily-btn`，并压缩 modal-cols/level-picker/difficulty-row/modal-lead/record-flag/result-grid/breakdown/stars-row/share-line 间距；新增任何弹窗内容都要重跑菜单与结算页「按钮完整可见」断言。
+- **浏览器接管断言细节**：演示接管 toast 会被首次倾斜提示覆盖，测试里先 `records.markHint('tilt') + tiltHintDone=true` 模拟老玩家；每日成绩断言用 `records.best(8000) === null` + 存档 `daily` 键集合验证主线隔离。
 
 ## v1.3 约束（2026-11-17）
 - **赛中教练**只在 `Game.fail()` 触发，闸门是 `canLiveCoach()`（每关 2 次、间隔 ≥8s），时间源必须走 `this.now()` 以便测试构造序列；遥测统一由 `buildTelemetry(phase, reason)` 产出，别在别处另拼字段。`zoneOf()` 方位词顺序是 `${col}${row}角`（「右下角」）。

@@ -7,8 +7,9 @@ import { FixedClock, STEP, MAX_CATCHUP, MAX_STEPS } from '../src/clock.js';
 import { decideQuality, QualityController } from '../src/quality.js';
 import { minimapSize } from '../src/ui.js';
 import { DIFFICULTIES, DIFFICULTY_ORDER, effectiveConfig, cycleDifficulty } from '../src/difficulty.js';
-import { Game } from '../src/game.js';
+import { Game, dailyConfig } from '../src/game.js';
 import { encodeShare, decodeShare, normalizeCode } from '../src/share.js';
+import { Autopilot, replayTrace } from '../src/autopilot.js';
 
 let passed = 0;
 let failed = 0;
@@ -32,31 +33,10 @@ function clearance(x, z, b) {
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 function autoPlay(lv, cfg, seconds = 150) {
-  const m = new Marble(lv);
-  const pts = lv.safePath.map((i) => lv.cellCenter(i % lv.cols, Math.floor(i / lv.cols)));
-  let target = 1;
-  for (let i = 0; i < seconds * 120; i++) {
-    const t = pts[Math.min(target, pts.length - 1)];
-    const dx = t.x - m.x;
-    const dz = t.z - m.z;
-    const d = Math.hypot(dx, dz);
-    if (d < 0.34 && target < pts.length - 1) target += 1;
-    const speed = clamp(d * 1.7, 0, 4.0);
-    const nx = d > 1e-6 ? dx / d : 0;
-    const nz = d > 1e-6 ? dz / d : 0;
-    const ax = clamp((nx * speed - m.vx) * 0.62, -1, 1);
-    const az = clamp((nz * speed - m.vz) * 0.62, -1, 1);
-    m.setAxis(ax, az, cfg.tiltMax);
-    const ev = m.step(1 / 120, cfg);
-    if (ev.fell >= 0 || ev.hazard >= 0) {
-      return { ok: false, reason: `撞上陷阱 @ ${(i / 120).toFixed(1)}s, 路径点 ${target}/${pts.length}` };
-    }
-    if (ev.goal) return { ok: true, detail: `${(i / 120).toFixed(1)}s 抵达终点` };
-  }
-  return {
-    ok: false,
-    reason: `超时，路径点 ${target}/${pts.length}，位置 (${m.x.toFixed(2)}, ${m.z.toFixed(2)})`
-  };
+  const r = new Autopilot(lv).run(cfg, { seconds });
+  return r.ok
+    ? { ok: true, detail: `${r.time.toFixed(1)}s 抵达终点` }
+    : { ok: false, reason: r.reason };
 }
 
 console.log('3D 弹珠迷宫 · 逻辑与物理验证\n');
@@ -275,6 +255,53 @@ console.log('AI 设计师 / 教练 / 叙事');
     liveTips.join(' / '));
   check('赛中教练在缺少方位数据时仍有兜底建议',
     localCoach({ phase: 'fail' }).length >= 1);
+
+  // 反馈闭环：上一局诊断后，下一局建议必须先验证改进事实。
+  const loopTips = localCoach({
+    phase: 'clear', hits: 4, parHits: 14, elapsed: 40, par: 60,
+    improvement: { escapedZone: true, prevZone: '右下角', prevHotZone: '右下角', prevHotCount: 5, hotCount: 1, hotImproved: true }
+  });
+  check('闭环教练先肯定改进并引用具体数字',
+    loopTips[0].includes('右下角') && loopTips.some((t) => t.includes('5 次降到 1 次')),
+    loopTips.join(' / '));
+  const repeatTips = localCoach({
+    phase: 'fail', zone: '右下角',
+    improvement: { escapedZone: false, prevZone: '右下角' }
+  });
+  check('同一方位再次出局时闭环教练换更具体的策略',
+    repeatTips[0].includes('右下角') && repeatTips[0].includes('Shift'),
+    repeatTips[0]);
+}
+
+console.log('');
+
+console.log('AI 自动试玩 Agent');
+{
+  // 主线三关：记录完整动作序列，再用 seed 重建关卡逐帧回放验证可复现。
+  for (const cfg of LEVELS) {
+    const lv = buildLevel(cfg);
+    const r = new Autopilot(lv).run(cfg, { record: true });
+    check(`Agent 通关第 ${cfg.id} 关并输出初始状态/种子/动作序列`,
+      r.ok && r.initial.seed === cfg.seed && Array.isArray(r.trace)
+      && r.trace.length === r.steps && r.trace.every((a) => a.length === 2
+        && Math.abs(a[0]) <= 1 && Math.abs(a[1]) <= 1),
+      r.ok ? `${r.time.toFixed(1)}s / ${r.steps} 步 / 碰撞 ${r.hits}` : r.reason);
+    if (r.ok) {
+      const rebuilt = buildLevel(cfg);
+      const rp = replayTrace(rebuilt, cfg, r.trace);
+      check(`第 ${cfg.id} 关动作序列可逐帧复现同一结果`,
+        rp.ok && rp.steps === r.steps,
+        rp.ok ? `${rp.steps} 步一致` : rp.reason);
+    }
+  }
+  // AI 生成关卡：不同种子与机制组合下 Agent 仍能通关（可解性校验的物理层兑现）。
+  const aiCfgs = [localDesign('简单'), localDesign('难一点，有熔岩和冰面'), localDesign('多放空洞和加速带')];
+  const aiResults = aiCfgs.map((c) => new Autopilot(buildLevel(c)).run(c));
+  check('Agent 对本地引擎生成的定制关卡全部可通关',
+    aiResults.every((r) => r.ok),
+    aiResults.map((r, i) => `cfg${i + 1}:${r.ok ? r.time.toFixed(1) + 's' : r.reason}`).join(' / '));
+  const dailyLv = buildLevel(dailyConfig(new Date(2026, 10, 17)));
+  check('Agent 可通关每日挑战迷宫', new Autopilot(dailyLv).run(dailyConfig(new Date(2026, 10, 17))).ok);
 }
 
 console.log('');
@@ -441,7 +468,8 @@ console.log('难度档位与成绩卡');
   };
   const stubUi = {
     showOverlay: noop, setStatus: noop, setTip: noop, setPauseLabel: noop,
-    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop, setAICoach: noop
+    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop, setAICoach: noop,
+    setDemoVisible: noop
   };
   const stubSfx = { click: noop, win: noop, clearAll: noop };
   const g = new Game(stubView, stubUi, stubSfx);
@@ -482,7 +510,8 @@ console.log('赛中教练与自定义关卡');
     showOverlay: (t, d) => overlays.push({ t, d }), hideOverlay: noop,
     setStatus: noop, setTip: noop, setPauseLabel: noop, clearTrail: noop,
     flashLevel: noop, setStats: noop, toast: noop,
-    setAICoach: noop, setLiveCoach: (tips, mode) => live.push({ tips, mode })
+    setAICoach: noop, setLiveCoach: (tips, mode) => live.push({ tips, mode }),
+    setDemoVisible: noop
   };
   const stubSfx = { click: noop, win: noop, clearAll: noop, fail: noop, bump: noop, fall: noop };
   const g = new Game(stubView, stubUi, stubSfx);
@@ -509,6 +538,37 @@ console.log('赛中教练与自定义关卡');
   check('赛中诊断写入失败弹窗占位且点名方位',
     live.length >= 2 && live[0].tips[0].includes('角'),
     live.length ? live[0].tips[0] : '无');
+
+  // 反馈闭环：失败诊断后，下一局遥测携带改进事实且只下发一次。
+  const loopTele = g.buildTelemetry('clear');
+  check('失败诊断后的下一局遥测携带改进事实',
+    !!loopTele.followUp && loopTele.followUp.zone.includes('角') && !!loopTele.improvement
+    && loopTele.improvement.escapedZone === true,
+    `上次出局 ${loopTele.followUp.zone}`);
+  check('改进事实只下发一次，避免引用陈旧数据',
+    g.buildTelemetry('clear').followUp === undefined);
+
+  // AI 演示：不计成绩不记生涯，抵达终点后回到起点，玩家输入可接管。
+  const cfgDemo = localDesign('简单一点，多放宝石');
+  g.loadShare(cfgDemo, buildLevel(cfgDemo), 'DEMO');
+  const clearsBeforeDemo = g.records.clearCount;
+  const playBefore = g.records.playTime;
+  check('定制关卡可启动 AI 演示，主线关卡不暴露',
+    g.startDemo() === true && g.demo === true);
+  for (let i = 0; i < 60; i++) g.update(1 / 120);
+  check('演示期间不累积玩家生涯时长',
+    g.records.playTime === playBefore && g.demo === true);
+  g.marble.x = g.level.goal.x;
+  g.marble.z = g.level.goal.z;
+  g.update(1 / 120);
+  check('演示通关不结算不计数，弹珠回到起点',
+    g.demo === false && g.records.clearCount === clearsBeforeDemo
+    && Math.abs(g.marble.x - g.level.start.x) < 1e-9 && g.state === 'playing');
+  g.startDemo();
+  g.setAxis(0.5, 0, true);
+  check('玩家有效输入立即接管演示', g.demo === false);
+  g.loadLevel(0);
+  check('主线关卡拒绝启动演示', g.startDemo() === false);
 
   // 自定义关卡（AI / 分享码）通关：只计生涯次数，不写主线成绩、不白送解锁。
   const cfg = localDesign('简单一点，多放宝石');
@@ -653,6 +713,69 @@ console.log('存档容错');
     r.hintSeen('tilt') && !r.hintSeen('boost') && !r.hintSeen('ice')
     && !r.hintSeen('evil') && Object.keys(r.data.hints).join(',') === 'tilt',
     `保留 ${Object.keys(r.data.hints).join(',')}`);
+  delete globalThis.localStorage;
+}
+console.log('');
+
+console.log('每日挑战');
+{
+  const d1 = dailyConfig(new Date(2026, 10, 17));
+  const d2 = dailyConfig(new Date(2026, 10, 17));
+  const d3 = dailyConfig(new Date(2026, 10, 18));
+  check('同一天种子确定、不同天迷宫不同',
+    d1.seed === d2.seed && d1.seed !== d3.seed && d1.daily === '2026-11-17',
+    `seed ${d1.seed} / ${d3.seed}`);
+  check('每日迷宫通过可解性校验且带完整机制',
+    validateLevelInput(d1).ok && d1.holes > 0 && d1.checkpoints > 0 && d1.timeLimit > 0);
+
+  globalThis.localStorage = {
+    _v: '{}', getItem() { return this._v; }, setItem(_k, v) { this._v = v; }
+  };
+  const r = new Records();
+  const f1 = r.submitDaily('2026-11-17', { time: 80, score: 700, stars: 1 });
+  const f2 = r.submitDaily('2026-11-17', { time: 60, score: 650, stars: 2 });
+  check('每日成绩按日期分键逐项取优并即时落盘',
+    !f1.previous && f2.newTime && !f2.newScore
+    && r.dailyBest('2026-11-17').time === 60 && r.dailyBest('2026-11-17').score === 700
+    && JSON.parse(globalThis.localStorage._v).daily['2026-11-17'].time === 60);
+  check('每日成绩不进主线榜单也不影响星级',
+    Object.keys(r.data.best).length === 0 && r.totalStars === 0 && r.unlocked === 1);
+  check('非法日期键被拒绝', r.submitDaily('bad-key', { time: 1, score: 1, stars: 1 }) === null);
+  globalThis.localStorage._v = JSON.stringify({ daily: {
+    '2026-11-17': { time: 50, score: 800, stars: 2 },
+    '2026-11-16': { time: -5, score: 1, stars: 1 },
+    'evil': { time: 1, score: 1, stars: 1 },
+    '2026-11-15': { time: 30, score: 1e12, stars: 9 }
+  } });
+  const dirty = new Records();
+  check('脏每日存档清洗：非法键丢弃、越界钳制',
+    Object.keys(dirty.data.daily).sort().join(',') === '2026-11-15,2026-11-17'
+    && dirty.data.daily['2026-11-15'].score === 1e9 && dirty.data.daily['2026-11-15'].stars === 3);
+
+  // 每日挑战完整链路：菜单开局 → 通关 → 只写当日成绩，不碰主线。
+  const noop = () => {};
+  const stubView = { buildLevel: noop, setGemsVisible: noop, setCheckpointsActive: noop, burstGoal: noop };
+  const stubUi = {
+    showOverlay: noop, hideOverlay: noop, setStatus: noop, setTip: noop, setPauseLabel: noop,
+    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop,
+    setAICoach: noop, setLiveCoach: noop, setDemoVisible: noop
+  };
+  const stubSfx = { click: noop, win: noop, clearAll: noop, fail: noop, bump: noop, fall: noop };
+  const g = new Game(stubView, stubUi, stubSfx);
+  check('每日挑战从菜单开局且走定制关卡路径',
+    g.startDaily() === true && g.state === 'playing' && !!g.cfgOverride
+    && g.cfg.daily === dailyConfig().daily && g.shareCode.length > 10);
+  const unlockedBefore = g.records.unlocked;
+  const bestBefore = Object.keys(g.records.data.best).length;
+  const clearsBefore = g.records.clearCount;
+  g.elapsed = 40;
+  g.hits = 3;
+  g.clearLevel();
+  check('每日通关写当日成绩、不写主线不解锁、生涯 +1',
+    g.records.dailyBest(dailyConfig().daily).time === 40
+    && Object.keys(g.records.data.best).length === bestBefore
+    && g.records.unlocked === unlockedBefore
+    && g.records.clearCount === clearsBefore + 1);
   delete globalThis.localStorage;
 }
 console.log('');

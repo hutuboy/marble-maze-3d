@@ -52,6 +52,30 @@ function sanitizeStats(raw) {
   return out;
 }
 
+// 每日挑战成绩：按 YYYY-MM-DD 分键，只保留最近 30 天，避免存档无限增长。
+// 与主线 best 完全隔离：不进星级统计、不影响解锁。
+const DAILY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DAILY_KEEP = 30;
+function sanitizeDaily(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const keys = Object.keys(raw).filter((k) => DAILY_KEY_RE.test(k)).sort();
+  for (const k of keys.slice(-DAILY_KEEP)) {
+    const v = raw[k];
+    if (!v || typeof v !== 'object') continue;
+    const time = Number(v.time);
+    if (!Number.isFinite(time) || time < 0 || time > 86400) continue;
+    const score = Number(v.score);
+    const stars = Number(v.stars);
+    out[k] = {
+      time,
+      score: Number.isFinite(score) ? Math.max(0, Math.min(1e9, score)) : 0,
+      stars: Number.isFinite(stars) ? Math.max(0, Math.min(3, Math.floor(stars))) : 0
+    };
+  }
+  return out;
+}
+
 // localStorage 在 file:// / 隐私模式 / 禁用 Cookie 时可能直接抛异常，
 // 这里统一降级为进程内内存记录，保证游戏逻辑与界面不受影响。
 export class Records {
@@ -59,7 +83,7 @@ export class Records {
     this.persistent = true;
     this.data = {
       v: SCHEMA, best: {}, unlocked: 1, hints: {}, difficulty: 'standard',
-      stats: { clears: 0, playTime: 0 }
+      stats: { clears: 0, playTime: 0 }, daily: {}
     };
     try {
       const store = globalThis.localStorage;
@@ -72,6 +96,7 @@ export class Records {
           this.data.best = sanitizeBest(parsed.best);
           this.data.hints = sanitizeHints(parsed.hints);
           this.data.stats = sanitizeStats(parsed.stats);
+          this.data.daily = sanitizeDaily(parsed.daily);
           if (DIFFICULTY_KEYS.includes(parsed.difficulty)) this.data.difficulty = parsed.difficulty;
           const u = Number(parsed.unlocked);
           if (Number.isFinite(u)) this.data.unlocked = Math.max(1, Math.min(99, Math.floor(u)));
@@ -151,6 +176,32 @@ export class Records {
   }
 
   hintSeen(key) { return this.data.hints[key] === true; }
+
+  // 每日挑战：只与同一天的历史最佳比，逐项取最优，立即落盘。
+  dailyBest(dateKey) {
+    const b = this.data.daily[dateKey];
+    return b && Number.isFinite(b.time) ? b : null;
+  }
+
+  submitDaily(dateKey, result) {
+    if (!DAILY_KEY_RE.test(String(dateKey))) return null;
+    const prev = this.dailyBest(dateKey);
+    const flags = {
+      newTime: !prev || result.time < prev.time - 1e-6,
+      newScore: !prev || result.score > prev.score,
+      previous: prev
+    };
+    this.data.daily[dateKey] = {
+      time: prev ? Math.min(prev.time, result.time) : result.time,
+      score: prev ? Math.max(prev.score, result.score) : result.score,
+      stars: prev ? Math.max(prev.stars, result.stars) : result.stars
+    };
+    // 只保留最近 30 天，与清洗口径一致。
+    const keys = Object.keys(this.data.daily).sort();
+    for (const k of keys.slice(0, Math.max(0, keys.length - DAILY_KEEP))) delete this.data.daily[k];
+    this.save();
+    return flags;
+  }
 
   // 逐项取历史最优：最快用时、最高得分、最多星级，互不覆盖。
   submit(id, result) {

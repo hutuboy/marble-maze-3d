@@ -56,6 +56,7 @@ export class UI {
       overlay: $('overlay'), modal: $('modal'), toast: $('toast'),
       btnPause: $('btnPause'), btnRestart: $('btnRestart'), btnMute: $('btnMute'),
       btnTilt: $('btnTilt'), btnQuality: $('btnQuality'), btnDifficulty: $('btnDifficulty'),
+      btnDemo: $('btnDemo'),
       minimap: $('minimap'), tilt: $('tilt'),
       sidePanel: $('sidePanel'), mapToggle: $('mapToggle'), levelFlash: $('levelFlash'),
       joystick: $('joystick'), joystickKnob: $('joystickKnob')
@@ -104,6 +105,9 @@ export class UI {
       this.el.statTime.textContent = fmtTime(d.elapsed);
       this.el.statTime.classList.remove('urgent');
     }
+    if (this.el.btnDemo && !this.el.btnDemo.hidden) {
+      this.el.btnDemo.textContent = d.demo ? '停止演示' : 'AI 演示';
+    }
   }
 
   setTip(text) { this.el.tips.textContent = text; }
@@ -128,6 +132,12 @@ export class UI {
   }
 
   setPauseLabel(paused) { this.el.btnPause.textContent = paused ? '继续' : '暂停'; }
+  // AI 演示入口只在定制关卡（AI / 分享 / 每日）显示，主线关卡不暴露。
+  setDemoVisible(visible) {
+    if (!this.el.btnDemo) return;
+    this.el.btnDemo.hidden = !visible;
+    if (!visible) this.el.btnDemo.textContent = 'AI 演示';
+  }
   setMuteLabel(muted) { this.el.btnMute.textContent = muted ? '音效 关' : '音效 开'; }
   setQualityLabel(text) { this.el.btnQuality.textContent = text; }
   setDifficultyLabel(text, disabled = false) {
@@ -506,6 +516,10 @@ const OVERLAY_HTML = {
     </div>
     <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}</div>
     <div class="level-picker">${levelCards(d)}</div>
+    ${d.daily ? `<button class="daily-btn" data-action="daily">
+      <span class="daily-tag">每日挑战 · ${d.daily.date}</span>
+      <span class="daily-sub">每天一座新迷宫 · 全球同图${d.daily.best ? ` · 今日最佳 ${fmtTime(d.daily.best.time)}` : ' · 尚无记录'}</span>
+    </button>` : ''}
     <div class="modal-btns">
       <button class="primary-btn" data-action="start">从第 1 关开始 <span>↵</span></button>
       <button class="ghost-btn" data-action="ai-lab">AI 实验室</button>
@@ -548,10 +562,12 @@ const OVERLAY_HTML = {
 
   levelclear: (d) => `
     <div class="modal-tag success">LEVEL CLEAR</div>
-    <h1>第 ${d.levelIndex + 1} 关通过</h1>
-    <p class="modal-lead">${d.name}　·　用时 ${fmtTime(d.elapsed)}${d.custom ? '　·　自定义关卡，不计入主线成绩' : ''}</p>
+    <h1>${d.daily ? '每日挑战完成' : `第 ${d.levelIndex + 1} 关通过`}</h1>
+    <p class="modal-lead">${d.name}　·　用时 ${fmtTime(d.elapsed)}${d.daily ? `　·　${d.daily} 全球同图 · 只与今天的自己比` : (d.custom ? '　·　自定义关卡，不计入主线成绩' : '')}</p>
     ${starsHTML(d.stars)}
-    ${recordBadge(d.rec)}
+    ${d.daily ? (d.dailyRec && !d.dailyRec.previous
+      ? '<div class="record-flag">今日首次完成 · 成绩已记录</div>'
+      : (d.dailyRec && d.dailyRec.newTime ? '<div class="record-flag">今日新纪录 · 最快用时</div>' : '')) : recordBadge(d.rec)}
     <div class="stars-row">累计星级 <b>${d.totalStars}</b> / ${d.maxStars}</div>
     ${breakdown(d)}
     ${statGrid([
@@ -560,7 +576,7 @@ const OVERLAY_HTML = {
       ['宝石', `${d.gemsGot} / ${d.gemsTotal}`],
       ['本关结算', `+${d.levelScore}`],
       ['累计总分', d.score],
-      ['最佳用时', d.best ? fmtTime(d.best.time) : '—']
+      [d.daily ? '今日最佳' : '最佳用时', (d.daily ? d.dailyBest : d.best) ? fmtTime((d.daily ? d.dailyBest : d.best).time) : '—']
     ])}
     ${d.aiPraise ? `<div class="ai-praise">${d.aiPraise}</div>` : ''}
     <div class="ai-coach" id="aiCoach"></div>
@@ -568,6 +584,7 @@ const OVERLAY_HTML = {
       ? `<div class="modal-btns">
           <button class="primary-btn" data-action="menu">返回主菜单 <span>↵</span></button>
           ${d.shareCode ? '<button class="ghost-btn" data-action="copy-share">复制分享链接</button>' : ''}
+          <button class="ghost-btn" data-action="demo">看 AI 演示</button>
         </div>`
       : `<button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`}
     ${d.shareCode

@@ -143,16 +143,17 @@ function boot(view) {
     const ma = joyActive || dragging || kb.x || kb.z ? null : motionAxis();
 
     if (joyActive) {
-      game.setAxis(joy.dx * scale, joy.dz * scale);
+      game.setAxis(joy.dx * scale, joy.dz * scale, true);
     } else if (ma) {
-      game.setAxis(ma.x * scale, ma.z * scale);
+      game.setAxis(ma.x * scale, ma.z * scale, true);
     } else if (dragging) {
       game.setAxis(
         Math.max(-1, Math.min(1, drag.dx / 105)) * scale,
-        Math.max(-1, Math.min(1, drag.dy / 105)) * scale
+        Math.max(-1, Math.min(1, drag.dy / 105)) * scale,
+        true
       );
     } else {
-      game.setAxis(kb.x * scale, kb.z * scale);
+      game.setAxis(kb.x * scale, kb.z * scale, true);
     }
     ui.setFineMode(fine);
     ui.setDifficultyLabel(`难度 ${difficultyLabel(game.difficulty)}`, game.state !== 'menu');
@@ -284,6 +285,11 @@ function boot(view) {
 
   document.getElementById('btnPause').addEventListener('click', () => game.togglePause());
   document.getElementById('btnRestart').addEventListener('click', () => game.restartLevel());
+  document.getElementById('btnDemo').addEventListener('click', () => {
+    sfx.ensure();
+    if (game.demo) game.stopDemo(true);
+    else game.startDemo();
+  });
   document.getElementById('btnMute').addEventListener('click', () => ui.setMuteLabel(sfx.toggleMute()));
   document.getElementById('btnTilt').addEventListener('click', () => { sfx.ensure(); toggleMotion(); });
   document.getElementById('btnQuality').addEventListener('click', () => {
@@ -376,6 +382,15 @@ function boot(view) {
     'ai-narrative': () => runAINarrative(),
     'ai-report': () => runAIReport(),
     level: (ds) => game.startFrom(ds.level),
+    daily: () => game.startDaily(),
+    // 结算页的「看 AI 演示」：先回到游玩态再启动 Agent，从起点重走一遍。
+    demo: () => {
+      if (game.state === 'levelclear' || game.state === 'gameclear') {
+        game.state = 'playing';
+        game.ui.hideOverlay();
+      }
+      game.startDemo();
+    },
     difficulty: (ds) => {
       if (game.setDifficulty(ds.mode)) ui.toast(`难度 · ${difficultyLabel(ds.mode)}`, 'info');
     },
@@ -436,6 +451,8 @@ function boot(view) {
     game, view, ui, clock, quality, motionAxis, toggleMotion,
     handleContextLost, handleContextRestored, showUnsupported,
     cycleDifficulty, copyScoreCard, copyShareLink, shareLink,
+    startDemo: () => game.startDemo(),
+    stopDemo: () => game.stopDemo(true),
     setJoystick: (dx, dz) => {
       const len = Math.hypot(dx, dz);
       const k = len > 1 ? 1 / len : 1;

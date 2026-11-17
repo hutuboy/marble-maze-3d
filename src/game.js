@@ -2,8 +2,9 @@ import { LEVELS, buildLevel } from './levels.js';
 import { Marble } from './physics.js';
 import { Records } from './records.js';
 import { DIFFICULTIES, effectiveConfig } from './difficulty.js';
-import { AIService, localDesign, localCoach, localNarrative, localReport } from './ai.js';
+import { AIService, localDesign, localCoach, localNarrative, localReport, sanitizeLevelInput, validateLevelInput } from './ai.js';
 import { encodeShare, decodeShare, normalizeCode } from './share.js';
+import { Autopilot } from './autopilot.js';
 
 export const STATE = {
   MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', FAILING: 'failing',
@@ -14,6 +15,35 @@ const fmtSeconds = (s) => {
   const t = Math.max(0, Math.floor(s));
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
+
+// 每日挑战：以日期为种子生成当天唯一迷宫，全球同图；
+// 手感固定为标准档，不随玩家难度选择变化，成绩按日期分键记录。
+export function dailyConfig(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const key = `${y}-${m}-${d}`;
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const cfg = sanitizeLevelInput({
+    name: `每日挑战 · ${m}/${d}`,
+    subtitle: '每天一座新迷宫',
+    cols: 10, rows: 10,
+    seed: (h >>> 0) % 2147483646 + 1,
+    loop: 0.14,
+    holes: 4, hazards: 2, gems: 6,
+    checkpoints: 2, boosts: 2, ice: 2,
+    tiltMax: 0.31, gravity: 29, timeLimit: 150,
+    par: 60, parHits: 14,
+    tip: '每日挑战：今天所有人都面对同一座迷宫，冲一个更快用时，把成绩卡分享给朋友。'
+  });
+  cfg.id = 8000;
+  cfg.daily = key;
+  return cfg;
+}
 
 export class Game {
   constructor(view, ui, sfx) {
@@ -41,6 +71,9 @@ export class Game {
     this.shareCode = '';       // 当前定制关卡的分享码（主线关卡为空）
     // 赛中教练：失败瞬间的即时诊断，本关最多 2 次、两次间隔 ≥ 8 秒。
     this.liveCoach = { used: 0, lastAt: 0 };
+    this.coachFollowUp = null; // 上次赛中诊断的遥测快照，下一局用来验证建议是否见效
+    this.demo = false;         // AI 演示模式：autopilot 代打，不计成绩与生涯统计
+    this.autopilot = null;
     this.hitZones = [];        // 最近碰撞点所属方位，用于判断「总在哪刮墙」
     this.tiltSum = 0;          // 倾角强度累计（0..1），均值反映操作激进度
     this.tiltSamples = 0;
@@ -104,7 +137,11 @@ export class Game {
       assist: d.assist,
       persistent: this.records.persistent,
       clearCount: this.records.clearCount,
-      playTime: this.records.playTime
+      playTime: this.records.playTime,
+      daily: (() => {
+        const dc = dailyConfig();
+        return { date: dc.daily, name: dc.name, best: this.records.dailyBest(dc.daily) };
+      })()
     };
   }
 
@@ -131,8 +168,12 @@ export class Game {
       '3D 弹珠迷宫 · 全通关',
       `难度：${d.label}${this.assistMode ? '（辅助档）' : ''}　称号：${this.clearTitle(stars)}`,
       ...rows,
-      `累计 ${stars} / ${LEVELS.length * 3} ★　总分 ${this.score}　总用时 ${fmtSeconds(this.totalTime)}　总碰撞 ${this.totalHits}`
-    ].join('\n');
+      `累计 ${stars} / ${LEVELS.length * 3} ★　总分 ${this.score}　总用时 ${fmtSeconds(this.totalTime)}　总碰撞 ${this.totalHits}`,
+      (() => {
+        const db = this.records.dailyBest(dailyConfig().daily);
+        return db ? `每日挑战 ${dailyConfig().daily}　最佳 ${fmtSeconds(db.time)}　${db.score} 分` : '';
+      })()
+    ].filter(Boolean).join('\n');
   }
 
   starsFor(cfg, elapsed, hits) {
@@ -194,6 +235,9 @@ export class Game {
     this.cfgOverride = cfg;
     this.level = level;
     this.liveCoach = { used: 0, lastAt: 0 };
+    this.coachFollowUp = null;
+    this.demo = false;
+    this.autopilot = null;
     this.hitZones = [];
     this.tiltSum = 0;
     this.tiltSamples = 0;
@@ -212,6 +256,7 @@ export class Game {
     this.view.setCheckpointsActive(this.level);
     this.ui.setTip(cfg.tip || level.cfg.tip || 'AI 定制迷宫');
     this.ui.setPauseLabel(false);
+    this.ui.setDemoVisible(!!cfg.aiGenerated);
     this.ui.clearTrail();
     this.ui.flashLevel();
     this.updateHUD();
@@ -265,9 +310,11 @@ export class Game {
   }
 
   // 教练遥测：赛后复盘与赛中诊断共用一套字段，phase 区分两种语境。
+  // followUp 携带上次诊断的快照，让教练能验证「上次的建议这次见效没有」，
+  // 只在下一局遥测里出现一次，避免反复引用陈旧数据。
   buildTelemetry(phase = 'clear', reason = '') {
     const hot = this.hotZone();
-    return {
+    const t = {
       elapsed: this.elapsed, hits: this.hits, gems: this.gemsGot,
       gemsTotal: this.level.gems.length,
       checkpoints: this.level.checkpoints.filter((c) => c.active).length,
@@ -278,6 +325,33 @@ export class Game {
       hotZone: hot.zone, hotCount: hot.count,
       tiltLevel: this.tiltSamples ? this.tiltSum / this.tiltSamples : 0
     };
+    if (this.coachFollowUp) {
+      t.followUp = this.coachFollowUp;
+      t.improvement = this.improvementOf(this.coachFollowUp, t);
+      this.coachFollowUp = null;
+    }
+    return t;
+  }
+
+  // 对比上次诊断与本次表现，产出可量化的改进事实，供教练「先验证再建议」。
+  improvementOf(prev, cur) {
+    if (!prev) return null;
+    const imp = {};
+    if (prev.zone) {
+      imp.escapedZone = cur.phase !== 'fail' || cur.zone !== prev.zone;
+      imp.prevZone = prev.zone;
+    }
+    if (prev.hotZone) {
+      const nowCount = cur.hotZone === prev.hotZone ? cur.hotCount : 0;
+      imp.prevHotZone = prev.hotZone;
+      imp.prevHotCount = prev.hotCount;
+      imp.hotCount = nowCount;
+      imp.hotImproved = nowCount < prev.hotCount;
+    }
+    if (prev.tiltLevel > 0.6 && cur.tiltLevel < prev.tiltLevel - 0.1) {
+      imp.tiltImproved = true;
+    }
+    return imp;
   }
 
   canLiveCoach() {
@@ -292,12 +366,106 @@ export class Game {
     if (!this.canLiveCoach()) return null;
     this.liveCoach.used += 1;
     this.liveCoach.lastAt = this.now();
-    const r = await this.ai.coach(this.buildTelemetry('fail', reason));
+    const tele = this.buildTelemetry('fail', reason);
+    // 记下本次诊断上下文：下一局结束时对比，形成「建议→执行→验证→再反馈」闭环。
+    this.coachFollowUp = {
+      zone: tele.zone, hotZone: tele.hotZone, hotCount: tele.hotCount,
+      tiltLevel: tele.tiltLevel, reason
+    };
+    const r = await this.ai.coach(tele);
     this.aiCoach = r && r.tips ? r.tips : [];
     if (typeof this.ui.setLiveCoach === 'function') {
       this.ui.setLiveCoach(this.aiCoach, r ? r.mode : 'local');
     }
     return { tips: this.aiCoach, mode: r ? r.mode : 'local' };
+  }
+
+  // ---------- AI 演示（自动试玩 Agent） ----------
+  // 从起点重开当前关卡并由 autopilot 代打；不计成绩、不记生涯统计，
+  // 玩家任意输入即可接管。只供定制关卡（AI / 分享 / 每日）使用。
+  startDemo() {
+    if (this.state !== STATE.PLAYING || !this.cfgOverride) return false;
+    this.marble.reset();
+    for (const gem of this.level.gems) gem.taken = false;
+    for (const cp of this.level.checkpoints) cp.active = false;
+    this.elapsed = 0;
+    this.hits = 0;
+    this.gemsGot = 0;
+    this.fallProgress = 0;
+    this.warnAt = -1;
+    this.wasOnIce = false;
+    this.axis = { x: 0, z: 0 };
+    this.hitZones = [];
+    this.tiltSum = 0;
+    this.tiltSamples = 0;
+    this.autopilot = new Autopilot(this.level);
+    this.demo = true;
+    this.view.setGemsVisible(this.level);
+    this.view.setCheckpointsActive(this.level);
+    this.ui.clearTrail();
+    this.ui.setStatus('AI 演示中', 'good');
+    this.ui.toast('AI 演示开始 · 任意操作即可接管', 'info');
+    this.updateHUD();
+    return true;
+  }
+
+  stopDemo(takeover = false) {
+    if (!this.demo) return;
+    this.demo = false;
+    this.autopilot = null;
+    this.axis = { x: 0, z: 0 };
+    this.ui.setStatus('游戏中', 'normal');
+    if (takeover) this.ui.toast('已接管 · 接下来看你的', 'info');
+  }
+
+  // 演示抵达终点：展示 Agent 成绩后回到起点，不走 clearLevel（不结算、不计数）。
+  finishDemo() {
+    const steps = this.autopilot ? this.autopilot.steps : 0;
+    const t = this.elapsed;
+    this.demo = false;
+    this.autopilot = null;
+    this.marble.reset();
+    for (const gem of this.level.gems) gem.taken = false;
+    for (const cp of this.level.checkpoints) cp.active = false;
+    this.elapsed = 0;
+    this.hits = 0;
+    this.gemsGot = 0;
+    this.fallProgress = 0;
+    this.warnAt = -1;
+    this.wasOnIce = false;
+    this.axis = { x: 0, z: 0 };
+    this.view.setGemsVisible(this.level);
+    this.view.setCheckpointsActive(this.level);
+    this.ui.clearTrail();
+    this.ui.setStatus('游戏中', 'normal');
+    this.ui.toast(`AI 演示通关 · ${t.toFixed(1)}s · ${steps} 步决策 · 轮到你了`, 'good');
+    this.sfx.win();
+    this.updateHUD();
+  }
+
+  // 每日挑战：日期种子全球同图，走定制关卡路径（不写主线成绩、不解锁）。
+  startDaily() {
+    const cfg = dailyConfig();
+    const check = validateLevelInput(cfg);
+    if (!check.ok) {
+      this.ui.toast('今日迷宫生成失败，请重试', 'warn');
+      return false;
+    }
+    this.aiLevel = cfg;
+    this.aiStory = null;
+    this.aiCoach = [];
+    this.shareCode = encodeShare(cfg);
+    this.score = 0;
+    this.lives = 3;
+    this.totalTime = 0;
+    this.totalHits = 0;
+    this.loadConfigured(cfg, check.level);
+    this.state = STATE.PLAYING;
+    this.ui.hideOverlay();
+    this.ui.setStatus('每日挑战', 'good');
+    this.ui.toast(`每日挑战 · ${cfg.daily} · 全球同图`, 'good');
+    this.sfx.click();
+    return true;
   }
 
   // 载入分享码关卡：level 已由 decodeShare 校验过，这里只负责开局。
@@ -373,6 +541,9 @@ export class Game {
     this.aiCoach = [];
     this.shareCode = '';
     this.liveCoach = { used: 0, lastAt: 0 };
+    this.coachFollowUp = null;
+    this.demo = false;
+    this.autopilot = null;
     this.hitZones = [];
     this.tiltSum = 0;
     this.tiltSamples = 0;
@@ -392,6 +563,7 @@ export class Game {
     this.view.setCheckpointsActive(this.level);
     this.ui.setTip(LEVELS[i].tip);
     this.ui.setPauseLabel(false);
+    this.ui.setDemoVisible(false);
     this.ui.clearTrail();
     this.ui.flashLevel();
     this.updateHUD();
@@ -414,13 +586,16 @@ export class Game {
       gemsTotal: this.level.gems.length,
       lives: this.lives,
       checkpoints: this.level.checkpoints.filter((c) => c.active).length,
-      checkpointsTotal: this.level.checkpoints.length
+      checkpointsTotal: this.level.checkpoints.length,
+      demo: this.demo
     });
   }
 
-  setAxis(x, z) {
+  setAxis(x, z, human = false) {
     this.axis.x = x;
     this.axis.z = z;
+    // 演示模式下玩家一旦给出有效输入即接管，AI 退场。
+    if (human && this.demo && Math.abs(x) + Math.abs(z) > 0.05) this.stopDemo(true);
     if (this.state === STATE.PLAYING && !this.tiltHintDone
       && (Math.abs(x) + Math.abs(z) > 0.12) && this.records.markHint('tilt')) {
       this.tiltHintDone = true;
@@ -608,6 +783,11 @@ export class Game {
       time: this.elapsed, score: this.lastLevelScore, stars, mode: this.difficulty
     });
     if (!custom) this.records.unlock(Math.min(LEVELS.length, this.levelIndex + 2));
+    // 每日挑战成绩按日期分键：只与同一天的自己比，不碰主线榜单。
+    const dailyKey = this.cfg.daily || '';
+    const dailyRec = dailyKey ? this.records.submitDaily(dailyKey, {
+      time: this.elapsed, score: this.lastLevelScore, stars
+    }) : null;
     this.flushStats();
     this.lastStars = stars;
     this.lastRecord = rec;
@@ -627,6 +807,9 @@ export class Game {
       assist: this.assistMode,
       isAI: !!this.aiLevel,
       custom,
+      daily: dailyKey,
+      dailyRec,
+      dailyBest: dailyKey ? this.records.dailyBest(dailyKey) : null,
       shareCode: this.shareCode,
       aiPraise: this.aiStory ? this.aiStory.praise : '',
       levels: LEVELS.map((c, i) => ({
@@ -688,20 +871,30 @@ export class Game {
     // 宝石提示每次都弹（是即时收益反馈，不是机制讲解）。
     if (ev.gems.length) this.ui.toast(`宝石 +${ev.gems.length * 150}`, 'good');
 
-    if (ev.goal) { this.clearLevel(); }
+    if (ev.goal) {
+      if (this.demo) { this.finishDemo(); return; }
+      this.clearLevel();
+    }
   }
 
   update(dt) {
     if (this.state === STATE.PLAYING) {
       this.elapsed += dt;
       this.totalTime += dt;
-      this.records.addPlayTime(dt);
-      this.playFlushAccum += dt;
-      if (this.playFlushAccum >= 5) this.flushStats();
+      // 演示是 AI 在玩：不累积玩家生涯时长，也不参与教练遥测采样。
+      if (!this.demo) {
+        this.records.addPlayTime(dt);
+        this.playFlushAccum += dt;
+        if (this.playFlushAccum >= 5) this.flushStats();
+      }
       const limit = this.cfg.timeLimit;
       if (limit > 0) {
         const left = limit - this.elapsed;
-        if (left <= 0) { this.fail('时间耗尽'); return; }
+        if (left <= 0) {
+          // 演示超时不扣玩家生命：直接交还控制权。
+          if (this.demo) { this.stopDemo(); this.ui.toast('AI 演示超时，已交还控制权', 'warn'); return; }
+          this.fail('时间耗尽'); return;
+        }
         const sec = Math.ceil(left);
         if (sec <= 10 && sec !== this.warnAt) {
           this.warnAt = sec;
@@ -709,10 +902,19 @@ export class Game {
         }
       }
 
+      if (this.demo && this.autopilot) {
+        // Agent 逐物理步读状态、出动作；超过 150 秒仍未通关则交还玩家。
+        const a = this.autopilot.nextAxis(this.marble);
+        this.axis.x = a.x;
+        this.axis.z = a.z;
+        if (this.autopilot.steps > 150 * 120) this.stopDemo();
+      }
       this.marble.setAxis(this.axis.x, this.axis.z, this.cfg.tiltMax);
       // 采样输入倾角强度：教练据此判断「是不是整局都顶着满倾角」。
-      this.tiltSum += Math.min(1, Math.hypot(this.axis.x, this.axis.z));
-      this.tiltSamples += 1;
+      if (!this.demo) {
+        this.tiltSum += Math.min(1, Math.hypot(this.axis.x, this.axis.z));
+        this.tiltSamples += 1;
+      }
       const ev = this.marble.step(dt, this.cfg);
       this.handleEvents(ev);
       if (this.state === STATE.PLAYING || this.state === STATE.FAILING) this.updateHUD();

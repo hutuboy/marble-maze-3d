@@ -136,6 +136,25 @@ try {
   })()`);
   await sleep(800);
   await shot('shot-gameclear.png');
+
+  // ---- v1.4 取证：每日挑战与 AI 演示 ----
+  await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.toMenu();
+    g.startDaily();
+    return true;
+  })()`);
+  await sleep(1700);
+  await shot('shot-daily.png');
+
+  await evalJS(`window.__marbleMaze.game.startDemo()`);
+  // 等 Agent 真正滚出一段距离再取证，避免停在起点。
+  for (let i = 0; i < 40; i++) {
+    const steps = await evalJS(`window.__marbleMaze.game.autopilot ? window.__marbleMaze.game.autopilot.steps : 0`);
+    if (steps > 360) break;
+    await sleep(150);
+  }
+  await shot('shot-demo.png');
 } finally {
   if (ws) ws.close();
   if (edge) edge.kill();

@@ -267,13 +267,13 @@ html, body {
   from { opacity: 0; transform: translateY(16px) scale(0.975); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.modal-tag { font-size: 11px; letter-spacing: 3px; color: var(--accent); margin-bottom: 10px; }
+.modal-tag { font-size: 11px; letter-spacing: 3px; color: var(--accent); margin-bottom: 8px; }
 .modal-tag.success { color: var(--good); }
 .modal-tag.danger { color: var(--danger); }
 .modal h1 { margin: 0 0 8px; font-size: 28px; font-weight: 600; letter-spacing: 1px; }
 .modal h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 1px; }
-.modal-lead { margin: 0 auto 14px; font-size: 13px; color: #b9cddd; line-height: 1.65; max-width: 520px; }
-.modal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; text-align: left; margin-bottom: 14px; }
+.modal-lead { margin: 0 auto 10px; font-size: 13px; color: #b9cddd; line-height: 1.65; max-width: 520px; }
+.modal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; text-align: left; margin-bottom: 6px; }
 .modal-list { margin: 0; padding-left: 17px; font-size: 12px; color: #b9cddd; line-height: 1.72; }
 
 .key-table { display: flex; flex-direction: column; gap: 4px; }
@@ -292,10 +292,10 @@ kbd {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
   gap: 8px;
-  margin: 0 0 22px;
+  margin: 0 0 14px;
 }
 .result-cell {
-  padding: 11px 8px;
+  padding: 9px 8px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -307,7 +307,7 @@ kbd {
 .result-cell b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .breakdown {
-  margin: 0 auto 20px;
+  margin: 0 auto 14px;
   max-width: 420px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -364,7 +364,7 @@ kbd {
   color: #cfe3f5; background: rgba(6, 14, 24, 0.6);
   border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; resize: vertical;
 }
-.ai-coach { margin-top: 8px; text-align: left; }
+.ai-coach { margin-top: 4px; text-align: left; }
 .ai-coach-title { font-size: 11px; letter-spacing: 1px; color: #9fd8ff; margin-bottom: 4px; }
 .ai-coach-row { font-size: 11px; color: #b9cbdb; line-height: 1.6; padding-left: 4px; }
 .ai-praise { font-size: 12px; color: #ffd98a; margin: 6px 0; }
@@ -373,9 +373,32 @@ kbd {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 9px;
-  margin: 0 0 12px;
+  margin: 0 0 6px;
   text-align: left;
 }
+/* 每日挑战入口：紧凑单行，不挤占菜单高度预算（modal max-height 断言敏感）。 */
+.daily-btn {
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 12px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 180, 84, 0.08);
+  border: 1px solid rgba(255, 180, 84, 0.35);
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.daily-btn:hover { background: rgba(255, 180, 84, 0.16); border-color: rgba(255, 180, 84, 0.6); }
+.daily-tag { font-weight: 600; color: #ffce8a; letter-spacing: 1px; }
+.daily-sub { font-size: 11px; color: #9fb4c8; }
 .level-card {
   font-family: inherit;
   position: relative;
@@ -403,11 +426,11 @@ kbd {
 .lc-lock { position: absolute; top: 11px; right: 11px; font-size: 10px; color: var(--muted); }
 .stars { font-size: 21px; letter-spacing: 4px; color: var(--warn); line-height: 1.4; }
 .stars .off { color: rgba(160, 190, 220, 0.22); }
-.stars-row { margin: -6px 0 16px; font-size: 11px; color: var(--muted); }
+.stars-row { margin: -6px 0 12px; font-size: 11px; color: var(--muted); }
 .stars-row b { color: var(--warn); font-size: 13px; }
 .record-flag {
   display: inline-block;
-  margin: 0 0 14px;
+  margin: 0 0 10px;
   padding: 5px 13px;
   font-size: 11px;
   color: #04121c;
@@ -429,7 +452,7 @@ kbd {
   justify-content: center;
   gap: 7px;
   flex-wrap: wrap;
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   font-size: 11px;
   color: var(--muted);
 }
@@ -567,7 +590,7 @@ kbd {
 .ai-coach-wait { font-size: 11px; color: #7f95a8; }
 
 /* 分享码：默认收起成一行，剪贴板不可用时展开即可手动选中复制。 */
-.share-line { margin: 10px 0 0; font-size: 10.5px; color: #7f95a8; text-align: left; }
+.share-line { margin: 6px 0 0; font-size: 10.5px; color: #7f95a8; text-align: left; }
 .share-line summary {
   cursor: pointer;
   color: #8fa8bd;

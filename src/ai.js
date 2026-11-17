@@ -121,6 +121,28 @@ export function localCoach(t = {}) {
   const elapsed = num(t.elapsed, 0);
   const par = num(t.par, 60);
 
+  // 反馈闭环：上一局给过诊断时，先用可量化事实验证建议是否见效，再给下一步。
+  const imp = t.improvement;
+  if (imp && typeof imp === 'object') {
+    if (imp.escapedZone && imp.prevZone) {
+      out.push(`上局在${imp.prevZone}出局，这次没再在那里失手——路线改对了，保持住。`);
+    } else if (imp.prevZone && t.phase === 'fail' && t.zone === imp.prevZone) {
+      out.push(`又在${imp.prevZone}出局：上次说的收倾角还没落地，进该区前按住 Shift 把速度降到一半。`);
+    }
+    if (imp.prevHotZone && imp.hotImproved) {
+      out.push(`${imp.prevHotZone}碰撞从 ${Math.round(num(imp.prevHotCount, 0))} 次降到 ${Math.round(num(imp.hotCount, 0))} 次，提前回正见效了。`);
+    }
+    if (imp.tiltImproved) out.push('整局倾角比上局收了，惯性更可控，继续用半倾角巡航。');
+    if (out.length) {
+      // 闭环反馈占第一条，再补一条面向下一步的可执行建议。
+      const next = t.phase === 'fail'
+        ? '下一把把检查点当分段目标，一段一段稳着推。'
+        : '节奏稳了，试试沿主路径直取终点冲 3 星。';
+      out.push(next);
+      return out.slice(0, 3);
+    }
+  }
+
   // 赛中诊断（失败瞬间）：优先说清「在哪出的问题」，而不是泛泛而谈。
   if (t.phase === 'fail') {
     const zone = String(t.zone || '').trim();

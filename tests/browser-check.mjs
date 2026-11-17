@@ -680,6 +680,157 @@ async function main() {
     && replay.walls === shared.walls && !replay.overlay.includes('visible'),
     `${replay.name} · ${replay.walls} 段墙`);
 
+  // ---- v1.4：AI 演示模式（自动试玩 Agent 代打，玩家随时接管） ----
+  const demoProbe = await evalJS(`(async () => {
+    const g = window.__marbleMaze.game;
+    const btn = document.getElementById('btnDemo');
+    const entryVisible = !btn.hidden;
+    // 模拟已见过倾斜引导的老玩家：避免首次倾斜提示覆盖接管 toast。
+    g.records.markHint('tilt');
+    g.tiltHintDone = true;
+    const timeBefore = g.records.playTime;
+    const clearsBefore = g.records.clearCount;
+    const started = g.startDemo();
+    const demoOn = g.demo && !!g.autopilot;
+    const x0 = g.marble.x, z0 = g.marble.z;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5000) {
+      if (g.autopilot && g.autopilot.steps > 60
+        && Math.hypot(g.marble.x - x0, g.marble.z - z0) > 0.4) break;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return {
+      entryVisible, started, demoOn,
+      moved: Math.hypot(g.marble.x - x0, g.marble.z - z0),
+      steps: g.autopilot ? g.autopilot.steps : 0,
+      label: btn.textContent,
+      timeBefore, timeDuring: g.records.playTime, clearsBefore,
+      pill: document.getElementById('statusPill').innerText
+    };
+  })()`);
+  check('定制关卡显示 AI 演示入口，启动后 Agent 实际驱动弹珠',
+    demoProbe.entryVisible && demoProbe.started && demoProbe.demoOn
+    && demoProbe.moved > 0.4 && demoProbe.steps > 60
+    && demoProbe.label === '停止演示' && demoProbe.pill === 'AI 演示中',
+    `位移 ${demoProbe.moved.toFixed(2)} / ${demoProbe.steps} 步 / ${demoProbe.label}`);
+  check('演示模式不记录生涯游玩时长',
+    demoProbe.timeDuring === demoProbe.timeBefore,
+    `${demoProbe.timeBefore.toFixed(2)}s -> ${demoProbe.timeDuring.toFixed(2)}s`);
+
+  await keyDown('ArrowRight', 'ArrowRight', 39);
+  await sleep(180);
+  const takeover = await evalJS(`({demo: window.__marbleMaze.game.demo, toast: document.getElementById('toast').textContent})`);
+  await keyUp('ArrowRight', 'ArrowRight', 39);
+  check('玩家键盘输入立即接管演示，AI 退场',
+    takeover.demo === false && takeover.toast.includes('已接管'), takeover.toast);
+
+  const demoFinish = await evalJS(`(async () => {
+    const g = window.__marbleMaze.game;
+    g.startDemo();
+    g.marble.x = g.level.goal.x; g.marble.z = g.level.goal.z;
+    g.marble.vx = 0; g.marble.vz = 0;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 3000 && g.demo) await new Promise((r) => setTimeout(r, 60));
+    return {
+      demo: g.demo, state: g.state,
+      toast: document.getElementById('toast').textContent,
+      clears: g.records.clearCount,
+      atStart: Math.hypot(g.marble.x - g.level.start.x, g.marble.z - g.level.start.z) < 0.3
+    };
+  })()`);
+  check('演示抵达终点展示 Agent 成绩并回起点，不结算不计数',
+    !demoFinish.demo && demoFinish.state === 'playing'
+    && demoFinish.toast.includes('AI 演示通关') && demoFinish.toast.includes('步决策')
+    && demoFinish.clears === demoProbe.clearsBefore && demoFinish.atStart,
+    demoFinish.toast);
+
+  const mainReject = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.toMenu(); g.start(0);
+    const rejected = g.startDemo() === false && !g.demo;
+    const btnHidden = document.getElementById('btnDemo').hidden;
+    g.toMenu();
+    return { rejected, btnHidden };
+  })()`);
+  check('主线关卡不暴露 AI 演示入口且拒绝启动',
+    mainReject.rejected && mainReject.btnHidden);
+
+  // ---- v1.4：每日挑战（日期种子全球同图，成绩与主线隔离） ----
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const dailyMenu = await evalJS(`(() => {
+    const b = document.querySelector('#modal [data-action="daily"]');
+    const m = document.getElementById('modal');
+    return {
+      exists: !!b,
+      text: b ? b.innerText.replace(/\\n/g, ' ') : '',
+      scroll: m.scrollHeight, client: m.clientHeight,
+      unlocked: window.__marbleMaze.game.records.unlocked
+    };
+  })()`);
+  check('菜单展示每日挑战入口（含今日日期）且不破坏高度预算',
+    dailyMenu.exists && dailyMenu.text.includes(todayKey)
+    && dailyMenu.scroll <= dailyMenu.client + 2,
+    `${dailyMenu.text.slice(0, 40)} / 内容 ${dailyMenu.scroll}px / 可视 ${dailyMenu.client}px`);
+
+  await evalJS(`document.querySelector('#modal [data-action="daily"]').click()`);
+  const dailyStarted = await waitFor(
+    `(window.__marbleMaze.game.state === 'playing' && !!window.__marbleMaze.game.cfg.daily)`, 3000, false);
+  const dailyCfg = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    return { daily: g.cfg.daily, id: g.cfg.id, cols: g.level.cols,
+      demoBtn: !document.getElementById('btnDemo').hidden };
+  })()`);
+  check('每日挑战以日期种子开局且提供 AI 演示入口',
+    dailyStarted && dailyCfg.daily === todayKey && dailyCfg.id === 8000
+    && dailyCfg.cols === 10 && dailyCfg.demoBtn,
+    `${dailyCfg.daily} / ${dailyCfg.cols}x${dailyCfg.cols}`);
+
+  await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.marble.x = g.level.goal.x; g.marble.z = g.level.goal.z;
+    g.marble.vx = 0; g.marble.vz = 0;
+    return true;
+  })()`);
+  const dailyClearOk = await waitFor(`window.__marbleMaze.game.state === 'levelclear'`, 3500);
+  const dailyClear = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    const m = document.getElementById('modal');
+    const btns = m.querySelectorAll('.modal-btns button');
+    const last = btns[btns.length - 1];
+    const raw = JSON.parse(localStorage.getItem('marble-maze-3d.records.v1') || '{}');
+    return {
+      title: m.querySelector('h1') ? m.querySelector('h1').innerText : '',
+      flag: m.querySelector('.record-flag') ? m.querySelector('.record-flag').innerText : '',
+      dailyBest: g.records.dailyBest(g.cfg.daily),
+      mainBest: g.records.best(8000),
+      unlocked: g.records.unlocked,
+      dailyKeys: raw.daily ? Object.keys(raw.daily) : [],
+      hasDemoBtn: !!m.querySelector('[data-action="demo"]'),
+      btnBottom: last ? last.getBoundingClientRect().bottom : 0,
+      modalBottom: m.getBoundingClientRect().bottom,
+      card: g.scoreCardText()
+    };
+  })()`);
+  check('每日通关写当日成绩，不写主线榜单也不解锁',
+    dailyClearOk && dailyClear.title === '每日挑战完成'
+    && dailyClear.flag.includes('今日首次完成') && !!dailyClear.dailyBest
+    && dailyClear.mainBest === null && dailyClear.unlocked === dailyMenu.unlocked
+    && dailyClear.dailyKeys.join(',') === todayKey,
+    `${dailyClear.title} / ${dailyClear.flag} / 解锁 ${dailyClear.unlocked}`);
+  check('每日结算页提供「看 AI 演示」且按钮完整可见',
+    dailyClear.hasDemoBtn && dailyClear.btnBottom <= dailyClear.modalBottom + 2,
+    `按钮底 ${dailyClear.btnBottom.toFixed(0)} / 弹窗底 ${dailyClear.modalBottom.toFixed(0)}`);
+  check('成绩卡附每日最佳成绩行',
+    dailyClear.card.includes('每日挑战 ' + todayKey),
+    dailyClear.card.split('\n').find((s) => s.includes('每日挑战')) || '');
+
+  await evalJS(`document.querySelector('#modal [data-action="demo"]').click()`);
+  const demoFromClear = await waitFor(
+    `(window.__marbleMaze.game.demo === true && window.__marbleMaze.game.state === 'playing')`, 2500, false);
+  check('结算页「看 AI 演示」可直接启动 Agent 重放', demoFromClear);
+  await evalJS(`window.__marbleMaze.game.stopDemo()`);
+
   // 无障碍与降级：弹窗语义、状态播报、减少动态效果
   const aria = await evalJS(`({
     dialog: document.getElementById('overlay').getAttribute('role'),
