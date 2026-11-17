@@ -8,6 +8,7 @@ import { decideQuality, QualityController } from '../src/quality.js';
 import { minimapSize } from '../src/ui.js';
 import { DIFFICULTIES, DIFFICULTY_ORDER, effectiveConfig, cycleDifficulty } from '../src/difficulty.js';
 import { Game } from '../src/game.js';
+import { encodeShare, decodeShare, normalizeCode } from '../src/share.js';
 
 let passed = 0;
 let failed = 0;
@@ -262,6 +263,44 @@ console.log('AI 设计师 / 教练 / 叙事');
   const broken = new AIService({ enabled: true, fetch: async () => ({ ok: false }) });
   const r3 = await broken.coach({ hits: 0 });
   check('AI 接口失败时教练建议仍可用', r3.mode === 'local' && r3.tips.length >= 1);
+
+  // 赛中教练：失败瞬间的诊断必须点名方位，而不是「多加练习」。
+  const liveTips = localCoach({
+    phase: 'fail', zone: '右下角', hotZone: '右下角', hotCount: 4,
+    tiltLevel: 0.92, hits: 12, gems: 2, gemsTotal: 6, checkpoints: 0
+  });
+  check('赛中教练点名出局方位与惯性问题',
+    liveTips.length >= 2 && liveTips[0].includes('右下角')
+    && liveTips.some((t) => t.includes('倾角')),
+    liveTips.join(' / '));
+  check('赛中教练在缺少方位数据时仍有兜底建议',
+    localCoach({ phase: 'fail' }).length >= 1);
+}
+
+console.log('');
+
+console.log('AI 关卡分享码');
+{
+  const cfg = localDesign('难一点，有熔岩和冰面，多放检查点');
+  const code = encodeShare(cfg);
+  const back = decodeShare(code);
+  const rebuilt = buildLevel(cfg);
+  check('分享码可复现同一座迷宫（墙段与安全路径一致）',
+    back.ok && back.cfg.seed === cfg.seed
+    && back.level.walls.length === rebuilt.walls.length
+    && back.level.safePath.length === rebuilt.safePath.length,
+    `${code.length} 字符`);
+  check('分享码只含 URL 安全字符且长度可控',
+    /^[A-Za-z0-9_-]+$/.test(code) && code.length < 400, `${code.length} 字符`);
+  check('分享码保留可读的关卡名与提示',
+    back.ok && back.cfg.name === cfg.name && back.cfg.tip === cfg.tip);
+  check('被截断或篡改的分享码会被拒绝',
+    !decodeShare(code.slice(0, -3)).ok && !decodeShare(code.slice(0, -1) + 'A').ok
+    && !decodeShare('').ok && !decodeShare('short').ok);
+  check('分享码兼容地址栏、查询串与纯码三种形态',
+    normalizeCode(`https://example.com/game#l=${code}`) === code
+    && normalizeCode(`?from=x&l=${code}`) === code
+    && normalizeCode(code) === code);
 }
 console.log('');
 
@@ -426,6 +465,80 @@ console.log('难度档位与成绩卡');
     g.records.clearCount === clearsBefore + 1
     && g.menuData().clearCount === clearsBefore + 1
     && g.menuData().playTime === g.records.playTime);
+  delete globalThis.localStorage;
+}
+
+console.log('');
+console.log('赛中教练与自定义关卡');
+{
+  globalThis.localStorage = {
+    _v: '{}', getItem() { return this._v; }, setItem(_k, v) { this._v = v; }
+  };
+  const noop = () => {};
+  const live = [];
+  const overlays = [];
+  const stubView = { buildLevel: noop, setGemsVisible: noop, setCheckpointsActive: noop, burstGoal: noop };
+  const stubUi = {
+    showOverlay: (t, d) => overlays.push({ t, d }), hideOverlay: noop,
+    setStatus: noop, setTip: noop, setPauseLabel: noop, clearTrail: noop,
+    flashLevel: noop, setStats: noop, toast: noop,
+    setAICoach: noop, setLiveCoach: (tips, mode) => live.push({ tips, mode })
+  };
+  const stubSfx = { click: noop, win: noop, clearAll: noop, fail: noop, bump: noop, fall: noop };
+  const g = new Game(stubView, stubUi, stubSfx);
+  let clock = 1000;
+  g.now = () => clock;
+  g.state = 'playing';
+  g.marble.x = g.level.width * 0.45;
+  g.marble.z = g.level.depth * 0.45;
+
+  const tele = g.buildTelemetry('fail', '掉进了空洞');
+  check('失败遥测标出出局方位与倾角强度',
+    tele.phase === 'fail' && tele.zone.includes('下') && tele.tiltLevel >= 0,
+    `${tele.zone} / 倾角 ${tele.tiltLevel.toFixed(2)}`);
+
+  const c1 = await g.askLiveCoach('掉进了空洞');
+  clock += 3000;
+  const c2 = await g.askLiveCoach('掉进了空洞');
+  clock += 9000;
+  const c3 = await g.askLiveCoach('掉进了空洞');
+  const c4 = await g.askLiveCoach('掉进了空洞');
+  check('赛中教练每关最多两次、间隔不足时静默跳过',
+    !!c1 && c2 === null && !!c3 && c4 === null,
+    `第一次 ${c1 ? c1.tips.length : 0} 条 / 第二次 ${c2 === null ? '跳过' : '触发'}`);
+  check('赛中诊断写入失败弹窗占位且点名方位',
+    live.length >= 2 && live[0].tips[0].includes('角'),
+    live.length ? live[0].tips[0] : '无');
+
+  // 自定义关卡（AI / 分享码）通关：只计生涯次数，不写主线成绩、不白送解锁。
+  const cfg = localDesign('简单一点，多放宝石');
+  const lv = buildLevel(cfg);
+  const clearsBefore = g.records.clearCount;
+  const bestBefore = Object.keys(g.records.data.best).length;
+  const unlockedBefore = g.records.unlocked;
+  g.loadShare(cfg, lv, 'TESTCODE');
+  g.state = 'playing';
+  g.elapsed = 10;
+  g.hits = 2;
+  g.clearLevel();
+  const last = overlays[overlays.length - 1];
+  check('自定义关卡通关不写主线成绩、也不额外解锁',
+    g.records.clearCount === clearsBefore + 1
+    && Object.keys(g.records.data.best).length === bestBefore
+    && g.records.unlocked === unlockedBefore,
+    `成绩 ${bestBefore} 条 → ${Object.keys(g.records.data.best).length} 条`);
+  check('自定义关卡结算页标注不计成绩并带分享码',
+    last.t === 'levelclear' && last.d.custom === true
+    && last.d.rec === null && last.d.shareCode === 'TESTCODE');
+
+  const code = encodeShare(cfg);
+  const g2 = new Game(stubView, stubUi, stubSfx);
+  const started = g2.loadShareFromHash(`#l=${code}`);
+  check('地址栏分享码可直接开局同一关卡',
+    started && g2.state === 'playing' && g2.shareCode === code && g2.aiLevel.seed === cfg.seed);
+  const g3 = new Game(stubView, stubUi, stubSfx);
+  check('坏分享码不改变开局状态',
+    g3.loadShareFromHash('#l=broken-code-xyz') === false && g3.state === 'menu');
   delete globalThis.localStorage;
 }
 console.log('');

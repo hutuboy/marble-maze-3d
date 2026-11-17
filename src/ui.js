@@ -198,6 +198,15 @@ export class UI {
       + tips.map((t) => `<div class="ai-coach-row">· ${t}</div>`).join('');
   }
 
+  // 赛中诊断：失败弹窗里的即时建议，与结算页的赛后复盘区分标题。
+  setLiveCoach(tips, mode = 'local') {
+    const box = document.getElementById('aiCoachLive');
+    if (!box || !Array.isArray(tips) || !tips.length) return;
+    const tag = mode === 'ai' ? 'AI 教练 · 本局诊断' : '本地教练 · 本局诊断';
+    box.innerHTML = `<div class="ai-coach-title">${tag}</div>`
+      + tips.map((t) => `<div class="ai-coach-row">· ${t}</div>`).join('');
+  }
+
   hideOverlay() {
     this.overlayType = '';
     this.el.overlay.classList.remove('visible');
@@ -555,8 +564,13 @@ const OVERLAY_HTML = {
     ])}
     ${d.aiPraise ? `<div class="ai-praise">${d.aiPraise}</div>` : ''}
     <div class="ai-coach" id="aiCoach"></div>
-    ${d.isAI
-      ? '<div class="modal-btns"><button class="primary-btn" data-action="menu">返回主菜单 <span>↵</span></button></div>'
+    ${d.custom ? '<div class="modal-section-title">自定义关卡 · 不计入主线星级与最佳成绩</div>' : ''}
+    ${d.shareCode ? `<div class="share-line">分享码 <b>${d.shareCode}</b></div>` : ''}
+    ${d.custom
+      ? `<div class="modal-btns">
+          <button class="primary-btn" data-action="menu">返回主菜单 <span>↵</span></button>
+          ${d.shareCode ? '<button class="ghost-btn" data-action="copy-share">复制分享链接</button>' : ''}
+        </div>`
       : `<button class="primary-btn" data-action="next">进入第 ${d.levelIndex + 2} 关 <span>↵</span></button>`}`,
 
   gameclear: (d) => `
@@ -587,6 +601,10 @@ const OVERLAY_HTML = {
     <p class="modal-lead">${d.hasCheckpoint
       ? `${d.checkpointName} 已激活，复活后保留本关用时、宝石与碰撞记录；按 R 可从起点彻底重开。`
       : '别急，收小倾角、提前减速会好走很多；按住 Shift 可精细微调。'}剩余生命 ${d.lives}。</p>
+    ${d.coach ? `<div class="ai-coach-live" id="aiCoachLive" aria-live="polite">
+      <div class="ai-coach-title">AI 教练 · 本局诊断</div>
+      <div class="ai-coach-row ai-coach-wait">正在回看这一局的轨迹…</div>
+    </div>` : ''}
     ${statGrid([
       ['本关用时', fmtTime(d.elapsed)],
       ['已结算总分', d.score],

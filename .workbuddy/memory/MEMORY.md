@@ -44,3 +44,10 @@
 - AI 生成的关卡必须经过 `sanitizeLevelInput`（数值钳制）→ `validateLevelInput`（buildLevel + BFS 可解性）才能加载；模型输出用 `extractJSON` 容错围栏。新增 AI 功能必须保留本地规则引擎降级路径，否则离线双击会坏。
 - `studio/` 是创空间部署源（docker, 端口 7860）。推送后必须删除 `studio/.git`（remote URL 含 token），`.gitignore` 排除 `studio/.git/`。线上 `.ms.show` 直连**不要带** SDK token 头，否则 403。
 - 当前线上：https://www.modelscope.cn/studios/hutuboy/marble-maze-ai （host `hutuboy-marble-maze-ai.ms.show`）。仓库已 public，创作手记在根目录 `创作手记.md`。更新线上要先 `npm run build` → 同步 4 个静态件到 `studio/` → 推送创空间 → 回读 bundle SHA 比对。
+
+## 输入与部署约束（2026-11-16 · v1.2.2）
+- **任何全局键盘监听都必须先判断焦点**：`isTypingTarget()`（INPUT/TEXTAREA/SELECT/contenteditable）直接放行，不 `preventDefault`、不响应快捷键。历史上 AI 实验室输入框吞空格 + 回车触发 `advance()` 关弹窗，被当成「崩溃」；`game.advance()` 另有 `overlayType==='ailab'` 兜底。空格/回车落在 BUTTON/A 上要交回浏览器原生激活，否则与 `advance()` 双触发。新增输入框 / 新快捷键都要重跑浏览器三条断言（空格不被吞 / 回车只换行 / Ctrl+Enter 开玩）。
+- **创空间 push 不会自动重新部署**：必须再 `POST https://www.modelscope.cn/openapi/v1/studios/{owner}/{repo}/deploy`（Bearer token），否则线上一直是旧容器（曾空转 37 次轮询）。状态查询走 `GET /openapi/v1/studios/{owner}/{repo}` 的 `data.status`，`Building → Deploying → Running`。
+- **创空间仓库必须 LF**：Windows `core.autocrlf=true` 会把 `game.bundle.js` 以 CRLF 写进 blob，容器检出的字节数每行 +1（4334 行 → +4334 字节），线上 sha256 永远对不上本地。同步前 `git config core.autocrlf false core.eol lf`，用 `git ls-files --eol` 校验全为 `i/lf`，再用 `git cat-file -p HEAD:game.bundle.js | sha256sum` 与本地比对。
+- 线上行为验证别指望浏览器：`www.modelscope.cn/studios/...?mode=full` 外壳页把游戏放在 iframe 里，本机 CDP 拿不到该 frame 的 context（frameTree 只有顶层）；直连 `.ms.show` 也会被 302 到外壳页。可靠做法是「线上 bundle SHA == 本地 SHA + 本地浏览器全量用例」。
+- `studio/app.py` 的 `Server.handle_error` 已忽略 ConnectionReset/BrokenPipe/ConnectionAborted（前端 8s AbortController 到点必然触发），别再改回默认。

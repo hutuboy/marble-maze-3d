@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>3D 弹珠迷宫 · Marble Maze</title>
+<meta name="description" content="纯前端 3D 弹珠迷宫：倾斜整座迷宫，让弹珠靠重力与惯性滚到终点。内置 AI 关卡设计师、赛中教练与训练报告，零依赖、双击即玩。">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b1220">
+<meta property="og:type" content="website">
+<meta property="og:title" content="3D 弹珠迷宫 · AI 版">
+<meta property="og:description" content="一句话生成属于你的 3D 迷宫；失败时 AI 教练会告诉你这一局是在哪个角落出的问题。">
+<meta property="og:image" content="https://hutuboy-marble-maze-ai.ms.show/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://hutuboy-marble-maze-ai.ms.show/">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -41,18 +52,18 @@
     </div>
   </header>
 
-  <div id="statusPill" class="status-pill" data-tone="normal">准备开始</div>
+  <div id="statusPill" class="status-pill" data-tone="normal" role="status" aria-live="polite">准备开始</div>
 
   <button type="button" id="mapToggle" class="map-toggle" aria-label="展开或收起小地图">地图</button>
 
   <aside class="side-panel" id="sidePanel">
     <div class="panel-card">
       <div class="panel-title">迷宫俯视图</div>
-      <canvas id="minimap" width="220" height="220"></canvas>
+      <canvas id="minimap" width="220" height="220" role="img" aria-label="迷宫俯视图与弹珠轨迹"></canvas>
     </div>
     <div class="panel-card tilt-card">
       <div class="panel-title">当前倾角</div>
-      <canvas id="tilt" width="120" height="120"></canvas>
+      <canvas id="tilt" width="120" height="120" role="img" aria-label="当前倾角指示"></canvas>
       <div class="tilt-hint" id="tiltHint">方向键 / WASD<br>或按住左键拖动</div>
     </div>
   </aside>
@@ -72,10 +83,10 @@
   </footer>
 
   <div id="levelFlash" class="level-flash"></div>
-  <div id="toast" class="toast" data-tone="info"></div>
+  <div id="toast" class="toast" data-tone="info" role="status" aria-live="polite"></div>
   <div id="joystick" class="joystick" aria-label="触屏方向摇杆"><div class="joystick-knob" id="joystickKnob"></div></div>
 
-  <div id="overlay" class="overlay visible">
+  <div id="overlay" class="overlay visible" role="dialog" aria-modal="true" aria-label="游戏面板">
     <div class="modal" id="modal">
       <div class="modal-tag">MARBLE MAZE · 3D</div>
       <h1>3D 弹珠迷宫</h1>

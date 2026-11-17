@@ -619,6 +619,89 @@ async function main() {
   await evalJS(`window.__marbleMaze.game.toMenu()`);
   await sleep(200);
 
+  // 赛中教练：失败瞬间在失败弹窗里给出针对本局的具体诊断
+  // 第 1 关没有空洞，这里用第 2 关（4 个空洞）触发真实坠落。
+  const fellForCoach = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
+    g.start(1);
+    const h = g.level.holes[0];
+    if (!h) return false;
+    g.marble.x = h.x; g.marble.z = h.z; g.marble.vx = 0; g.marble.vz = 0;
+    return true;
+  })()`);
+  const coachShown = await waitFor(
+    `(window.__marbleMaze.game.state === 'failed'
+      && !!document.getElementById('aiCoachLive')
+      && document.getElementById('aiCoachLive').querySelectorAll('.ai-coach-row').length > 0)`,
+    7000, false);
+  const coachBox = await evalJS(`(() => {
+    const box = document.getElementById('aiCoachLive');
+    return {
+      rows: box ? box.querySelectorAll('.ai-coach-row').length : 0,
+      text: box ? box.innerText.replace(/\\n/g, ' / ') : '',
+      zone: window.__marbleMaze.game.buildTelemetry('fail').zone,
+      overlay: window.__marbleMaze.ui.overlayType
+    };
+  })()`);
+  check('失败弹窗内出现赛中 AI 教练诊断并点名方位',
+    fellForCoach && coachShown && coachBox.rows >= 1 && coachBox.overlay === 'failed'
+    && coachBox.zone.length >= 2,
+    `${coachBox.zone} · ${coachBox.text.slice(0, 52)}`);
+
+  // 分享码：AI 生成 → 短码可复现 → 地址栏直接开局同一座迷宫
+  await evalJS(`window.__marbleMaze.game.toMenu()`);
+  const shared = await evalJS(`(async () => {
+    const g = window.__marbleMaze.game;
+    await g.designLevel('简单一点，多放宝石');
+    return {
+      code: g.shareCode,
+      link: window.__marbleMaze.shareLink(),
+      seed: g.cfg.seed,
+      walls: g.level.walls.length,
+      name: g.cfg.name
+    };
+  })()`);
+  check('AI 生成关卡自动产出可分享短码',
+    shared.code.length > 20 && shared.link.startsWith('http')
+    && shared.link.includes('#l=' + shared.code),
+    `${shared.code.length} 字符 · ${shared.code.slice(0, 10)}…`);
+
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?from=share#l=${shared.code}` });
+  const shareReady = await waitFor(`!!(window.__marbleMaze && window.__marbleMaze.game)`, 12000, false);
+  const replayed = await waitFor(`window.__marbleMaze.game.state === 'playing'`, 8000, false);
+  const replay = await evalJS(`({
+    seed: window.__marbleMaze.game.cfg.seed,
+    walls: window.__marbleMaze.game.level.walls.length,
+    name: window.__marbleMaze.game.cfg.name,
+    overlay: document.getElementById('overlay').className
+  })`);
+  check('打开分享链接直接复现同一座迷宫',
+    shareReady && replayed && replay.seed === shared.seed
+    && replay.walls === shared.walls && !replay.overlay.includes('visible'),
+    `${replay.name} · ${replay.walls} 段墙`);
+
+  // 无障碍与降级：弹窗语义、状态播报、减少动态效果
+  const aria = await evalJS(`({
+    dialog: document.getElementById('overlay').getAttribute('role'),
+    modal: document.getElementById('overlay').getAttribute('aria-modal'),
+    live: document.getElementById('statusPill').getAttribute('aria-live'),
+    toastLive: document.getElementById('toast').getAttribute('aria-live'),
+    map: document.getElementById('minimap').getAttribute('role')
+  })`);
+  check('弹窗与状态区具备无障碍语义',
+    aria.dialog === 'dialog' && aria.modal === 'true'
+    && aria.live === 'polite' && aria.toastLive === 'polite' && aria.map === 'img',
+    `role=${aria.dialog} / aria-live=${aria.live}`);
+
+  await send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+  });
+  await sleep(120);
+  const reducedMotion = await evalJS(
+    `getComputedStyle(document.getElementById('levelFlash')).display`);
+  await send('Emulation.setEmulatedMedia', { features: [] });
+  check('系统要求减少动态效果时关闭切场闪白', reducedMotion === 'none', reducedMotion);
+
   await sleep(200);
   const httpErrors = errors.length;
   check('HTTP 模式下控制台无错误', httpErrors === 0, errors.slice(0, 2).join(' | ') || '无');
@@ -966,37 +1049,48 @@ async function main() {
   await send('Emulation.clearDeviceMetricsOverride');
   await sleep(300);
 
-  const careerProbe = await evalJS(`(async () => {
+  // 时长增长不能靠固定 sleep：无头 swiftshader 偶尔一帧要几百毫秒，改成轮询等增长。
+  const careerBase = await evalJS(`(() => {
     const g = window.__marbleMaze.game;
-    const menuText = () => document.getElementById('modal').innerText;
     g.toMenu();
-    const before = { clears: g.records.clearCount, time: g.records.playTime };
-    const menuBefore = menuText();
-    g.start(0);
-    await new Promise((r) => setTimeout(r, 260));
+    return {
+      clears: g.records.clearCount,
+      time: g.records.playTime,
+      menuBefore: document.getElementById('modal').innerText
+    };
+  })()`);
+  await evalJS(`window.__marbleMaze.game.start(0)`);
+  const grew = await waitFor(
+    `window.__marbleMaze.game.records.playTime > ${careerBase.time} + 0.1`, 6000, false);
+  const careerMid = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
     g.togglePause();
-    const during = { clears: g.records.clearCount, time: g.records.playTime };
     const stored = JSON.parse(localStorage.getItem('marble-maze-3d.records.v1'));
+    return {
+      time: g.records.playTime,
+      storedTime: stored.stats.playTime,
+      storedClears: stored.stats.clears
+    };
+  })()`);
+  const careerAfter = await evalJS(`(() => {
+    const g = window.__marbleMaze.game;
     g.start(0);
     g.clearLevel();
     const afterClear = g.records.clearCount;
     g.toMenu();
-    return {
-      before, during, afterClear, menuBefore, menuAfter: menuText(),
-      storedClears: stored.stats.clears, storedTime: stored.stats.playTime
-    };
+    return { afterClear, menuAfter: document.getElementById('modal').innerText };
   })()`);
   check('游玩时长持续增长且暂停时落盘',
-    careerProbe.during.time > careerProbe.before.time + 0.1
-    && Math.abs(careerProbe.storedTime - careerProbe.during.time) < 0.2,
-    `${careerProbe.before.time.toFixed(2)}s -> ${careerProbe.during.time.toFixed(2)}s / 存档 ${careerProbe.storedTime.toFixed(2)}s`);
+    grew && careerMid.time > careerBase.time + 0.1
+    && Math.abs(careerMid.storedTime - careerMid.time) < 0.2,
+    `${careerBase.time.toFixed(2)}s -> ${careerMid.time.toFixed(2)}s / 存档 ${careerMid.storedTime.toFixed(2)}s`);
   check('通关次数跨关累计并在菜单展示生涯统计',
-    careerProbe.afterClear === careerProbe.before.clears + 1
-    && careerProbe.storedClears === careerProbe.before.clears
-    && careerProbe.menuBefore.includes('生涯通关')
-    && careerProbe.menuBefore.includes('游玩')
-    && careerProbe.menuAfter.includes('生涯通关 ' + careerProbe.afterClear + ' 次'),
-    `通关 ${careerProbe.before.clears} -> ${careerProbe.afterClear} / ${careerProbe.menuAfter.split('\n').find((s) => s.includes('生涯通关')) || ''}`);
+    careerAfter.afterClear === careerBase.clears + 1
+    && careerMid.storedClears === careerBase.clears
+    && careerBase.menuBefore.includes('生涯通关')
+    && careerBase.menuBefore.includes('游玩')
+    && careerAfter.menuAfter.includes('生涯通关 ' + careerAfter.afterClear + ' 次'),
+    `通关 ${careerBase.clears} -> ${careerAfter.afterClear} / ${careerAfter.menuAfter.split('\n').find((s) => s.includes('生涯通关')) || ''}`);
 
   const sfxProbe = await evalJS(`(() => {
     const g = window.__marbleMaze.game;

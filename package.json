@@ -2,6 +2,7 @@
   "name": "marble-maze-3d",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "自包含的 3D 弹珠迷宫游戏（Three.js + 自研物理，零运行时依赖）",
   "type": "module",
   "scripts": {

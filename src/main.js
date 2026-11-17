@@ -346,6 +346,29 @@ function boot(view) {
     if (box) box.value = r.text;
   }
 
+  // 分享链接：把当前定制关卡的短码拼到地址尾部，别人打开就是同一座迷宫。
+  function shareLink() {
+    if (!game.shareCode) return '';
+    return `${location.href.split('#')[0]}#l=${game.shareCode}`;
+  }
+
+  async function copyShareLink() {
+    const url = shareLink();
+    if (!url) {
+      ui.toast('当前关卡没有分享码', 'warn');
+      return false;
+    }
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+      }
+    } catch (_) { /* file:// 或非安全上下文会拒绝，走手动复制 */ }
+    ui.toast(ok ? '分享链接已复制' : '复制被拒绝，请手动复制地址栏 #l= 后的短码', ok ? 'good' : 'warn');
+    return ok;
+  }
+
   const ACTIONS = {
     start: () => game.start(),
     'ai-lab': () => game.showAILab(),
@@ -362,6 +385,7 @@ function boot(view) {
     next: () => game.nextLevel(),
     again: () => game.start(),
     'copy-card': () => copyScoreCard(),
+    'copy-share': () => copyShareLink(),
     menu: () => game.toMenu()
   };
   document.getElementById('overlay').addEventListener('click', (e) => {
@@ -411,7 +435,7 @@ function boot(view) {
   window.__marbleMaze = {
     game, view, ui, clock, quality, motionAxis, toggleMotion,
     handleContextLost, handleContextRestored, showUnsupported,
-    cycleDifficulty, copyScoreCard,
+    cycleDifficulty, copyScoreCard, copyShareLink, shareLink,
     setJoystick: (dx, dz) => {
       const len = Math.hypot(dx, dz);
       const k = len > 1 ? 1 / len : 1;
@@ -422,6 +446,12 @@ function boot(view) {
     joystickAxis: () => joy ? { x: joy.dx, z: joy.dz } : null,
     isContextLost: () => contextLost
   };
+  // 地址栏带 #l=xxx 时直接进分享关卡；坏码只提示，不影响正常开局。
+  if (location.hash) game.loadShareFromHash(location.hash);
+  window.addEventListener('hashchange', () => {
+    // 只在不打断对局时响应地址变化（游玩中粘贴链接不劫持当前局）。
+    if (game.state === 'menu') game.loadShareFromHash(location.hash);
+  });
   requestAnimationFrame(frame);
 }
 

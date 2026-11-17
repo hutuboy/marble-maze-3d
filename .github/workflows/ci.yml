@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: 逻辑测试 + 构建一致性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 逻辑与物理测试
+        run: npm test
+
+      - name: 重新打包
+        run: npm run build
+
+      # 仓库里的 game.bundle.js 必须是当前源码构建出来的产物，
+      # 否则「源码 == 线上」这个前提就不成立了。
+      - name: 校验构建产物与源码一致
+        run: |
+          if ! git diff --quiet -- game.bundle.js studio/game.bundle.js; then
+            echo "::error::game.bundle.js 与 src/ 不一致，请本地 npm run build 并同步 studio/ 后提交"
+            git diff --stat -- game.bundle.js studio/game.bundle.js
+            exit 1
+          fi
+          echo "构建产物与仓库一致：$(sha256sum game.bundle.js | cut -c1-16)"
+
+      # token 只允许存在于创空间 secret，任何前端产物里出现都算泄漏。
+      - name: 扫描产物中的疑似密钥
+        run: |
+          if grep -Eq "ms-[0-9a-f]{8}-[0-9a-f]{4}" game.bundle.js studio/game.bundle.js; then
+            echo "::error::构建产物里出现疑似 ModelScope token"
+            exit 1
+          fi
+          echo "未发现明文密钥"
+
+      - name: 校验 studio 静态件与根目录一致
+        run: |
+          for f in index.html styles.css game.bundle.js favicon.svg; do
+            if ! cmp -s "$f" "studio/$f"; then
+              echo "::error::studio/$f 与根目录版本不一致，部署前需同步"
+              exit 1
+            fi
+          done
+          if ! cmp -s docs/og-cover.png studio/og-cover.png; then
+            echo "::error::studio/og-cover.png 与 docs/og-cover.png 不一致"
+            exit 1
+          fi
+          echo "studio 静态件与根目录一致"

@@ -120,6 +120,24 @@ export function localCoach(t = {}) {
   const cps = num(t.checkpoints, 0);
   const elapsed = num(t.elapsed, 0);
   const par = num(t.par, 60);
+
+  // 赛中诊断（失败瞬间）：优先说清「在哪出的问题」，而不是泛泛而谈。
+  if (t.phase === 'fail') {
+    const zone = String(t.zone || '').trim();
+    const hotZone = String(t.hotZone || '').trim();
+    const hotCount = Math.round(num(t.hotCount, 0));
+    const tiltLevel = num(t.tiltLevel, 0);
+    if (zone) out.push(`${zone}出局：进这片区域前把倾角收到一半以下，贴内角走、别贴外沿。`);
+    if (hotZone && hotZone === zone && hotCount >= 3) {
+      out.push(`${hotZone}已经撞了 ${hotCount} 次，那里是连续弯：按住 Shift 逐个拐角微调。`);
+    } else if (hotZone && hotCount >= 5) {
+      out.push(`碰撞集中在${hotZone}：提前松手回正，让弹珠靠惯性滑过，别硬顶着墙推。`);
+    }
+    if (tiltLevel > 0.78) out.push('整局几乎顶着满倾角：速度越快越难改向，用半倾角巡航更稳。');
+    if (!out.length) out.push('这次是走位问题不是速度问题：先在直道把速度降下来，再进弯。');
+    return out.slice(0, 3);
+  }
+
   if (hits > parHits) out.push('碰撞偏多：按住 Shift 用精细倾角，靠近墙体时提前回正。');
   if (elapsed > par * 1.4) out.push('用时偏长：先沿主路径推进，宝石和加速带放到第二趟再拿。');
   if (gems < gemsTotal * 0.5) out.push('宝石收集较少：它们多在分支路线上，值得绕路。');

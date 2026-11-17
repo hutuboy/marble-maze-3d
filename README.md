@@ -1,8 +1,31 @@
 # 3D 弹珠迷宫 · Marble Maze 3D
 
+[![CI](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml/badge.svg)](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-3ddc97.svg)](LICENSE)
+[![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-0984e3.svg)](#技术方案)
+[![Tests](https://img.shields.io/badge/tests-119%20%2B%2093-00b894.svg)](#验证基线)
+
 > **AI+∞ 开发者创作大赛第三期「AI 造游戏」参赛作品**
 > 在线试玩（魔搭创空间，AI 功能已启用）：**https://www.modelscope.cn/studios/hutuboy/marble-maze-ai**
 > 本地双击 `index.html` 也能完整游玩，AI 功能会自动降级为本地规则引擎。
+
+![游戏画面](docs/playing.png)
+
+| 主菜单 | AI 实验室 | 通关结算 |
+| --- | --- | --- |
+| ![菜单](docs/menu.png) | ![AI 实验室](docs/ailab.png) | ![结算](docs/levelclear.png) |
+
+## 30 秒上手
+
+```bash
+git clone https://github.com/hutuboy/marble-maze-3d.git
+cd marble-maze-3d
+# 方式一：直接双击 index.html（无需任何安装）
+# 方式二：用自带静态服务器
+npm start          # 打开 http://localhost:5173
+```
+
+改完 `src/` 后跑 `npm run build` 重新打包；`npm test` 是纯 Node 验证（不需要浏览器）。
 
 ## 技术方案
 
@@ -92,10 +115,13 @@
 ## AI 能力（参赛版 P6）
 
 - **AI 关卡设计师**：在主菜单进入「AI 实验室」，用一句话描述难度与机制（如「难一点，有熔岩和冰面，多加加速带」），模型生成关卡配置后经 `buildLevel` + BFS 可解性校验才能开玩；不合法参数会被钳制，模型失败自动用本地规则引擎兜底。
-- **AI 教练**：每次通关后基于用时、碰撞、宝石、检查点等真实 telemetry 给出针对性建议，注入结算弹窗；离线时用规则引擎给出同样可执行的建议。
+- **赛中 AI 教练**：失败瞬间（掉洞 / 熔岩 / 超时）会在失败弹窗里给一次即时诊断——遥测包含**出局方位**（九宫格）、**碰撞最集中的方位与次数**、**整局平均倾角强度**，所以建议能具体到「右下角出局：进这片区域前把倾角收到一半以下」。每关最多 2 次、两次间隔 ≥ 8 秒，避免每次都打模型。
+- **赛后 AI 教练**：每次通关后基于用时、碰撞、宝石、检查点等真实 telemetry 给出针对性建议，注入结算弹窗；离线时用规则引擎给出同样可执行的建议。
+- **关卡分享码**：AI 生成的关卡会压成一段 URL 安全短码（含 seed，因此能逐格复现），写进地址栏 `#l=`。点「复制分享链接」发给别人，对方打开就是同一座迷宫；短码带校验位，被截断或手改只会提示「分享码无效」，不会喂进渲染层。
 - **AI 叙事**：按玩家输入主题生成关卡名、副标题、玩法提示与通关赞语。
 - **训练报告**：汇总生涯通关次数、游玩时长、碰撞与星级，生成可复制的中文报告。
 - **部署与降级**：创空间后端 `studio/app.py`（纯标准库）托管静态文件并注入 AI 开关，`/api/ai/*` 代理 Qwen 模型链；本地 HTTP / `file://` 不注入开关，不发任何网络请求，保证双击即玩、零控制台错误。
+- **成绩隔离**：AI 关卡与分享关卡的 id 是随机的，通关**只计入生涯次数**，不写主线最佳成绩、也不额外解锁——避免自定义关卡污染主线榜单。
 
 ## 文件
 
@@ -111,23 +137,38 @@ src/difficulty.js   难度档位定义、有效配置生成、档位循环
 src/clock.js        固定步长时钟、低帧率追帧与欠账
 src/quality.js      画质档位决策、滞回与自适应降级
 src/scene.js        Three.js 场景、光照、材质、相机、粒子、画质档位、资源审计
-src/game.js         状态机、计分、复活、事件判定
+src/game.js         状态机、计分、复活、事件判定、赛中/赛后教练调度
 src/ui.js           HUD、小地图与轨迹、倾角指示器、弹窗
 src/audio.js        程序化音效（碰撞/拾取/失败/通关 + 检查点/加速带/冰面专属音色）
 src/ai.js           AI 设计师/教练/叙事/训练报告，含本地规则引擎降级
+src/share.js        AI 关卡分享码编解码（base64url + 校验位 + 可玩性校验）
 studio/             魔搭创空间部署源（静态托管 + AI 代理端点 + secret 注入）
-src/main.js         入口、键鼠/体感输入、主循环
+src/main.js         入口、键鼠/体感输入、主循环、分享码载入
 build.mjs           构建脚本
 serve.mjs           零依赖静态服务器
+docs/               README 截图与分享封面
+.github/workflows/  CI：逻辑测试 + 构建一致性 + 产物密钥扫描
 tests/verify.mjs    纯 Node 逻辑与物理验证
 tests/browser-check.mjs  无头 Edge 全流程与零错误验证
 tests/shot-levels.mjs    实拍截图脚本
 ```
 
+## 二次开发
+
+- **换关卡**：改 `src/levels.js` 的 `LEVELS`（`cols/rows/seed/holes/gems/...`），`npm test` 会自动校验新配置可解且不穿墙；改完 `npm run build`。
+- **换视觉**：`src/scene.js` 里的程序化纹理与材质集中在建场景的函数里，配色改 CSS 变量（`styles.css` 顶部 `:root`）与材质常量即可，无图片资源需要替换。
+- **换 AI 后端**：`src/ai.js` 只依赖 `POST {base}/{design|coach|narrative|report}` 的 `{ok, text}` 约定；把 `studio/app.py` 换成任意实现同样接口的服务即可，前端四层容错不需要改。
+- **接口契约**：模型返回 `{ok: true, text: "<JSON 字符串>"}`；关卡 JSON 字段见 `studio/app.py` 的 `SYSTEMS.design`，非法值会被 `sanitizeLevelInput` 钳制。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。游戏本体（Three.js 为 MIT）与全部素材均为运行时程序化生成，可直接商用与二次分发；若用于自己的项目，保留版权声明即可。
+
 ## 验证基线
 
-- `npm test`：**95 项通过**（33 项原有物理/可解性断言 + 22 项 P1 机制与成绩断言 + 5 项固定步长时钟 + 9 项画质决策 + 3 项存档容错 + 5 项 P3 + 11 项 P4 难度与成绩卡 + 7 项 P5 生涯统计与专属音效）。
-- `npm run test:browser`：**88 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键。
+- `npm test`：**119 项通过**（物理/可解性、P1 机制与成绩、固定步长时钟、画质决策、存档容错、P3/P4/P5 断言、AI 四能力与四层容错、赛中教练节流与遥测、分享码编解码与自定义关卡成绩隔离）。
+- `npm run test:browser`：**93 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键、失败弹窗内的赛中教练诊断、分享链接复现同一座迷宫、无障碍语义与减少动态效果。
+- CI（GitHub Actions）会重跑 `npm test`，并校验 `game.bundle.js` 与 `src/` 构建结果一致、`studio/` 静态件与根目录一致、产物中不存在疑似密钥。
 - 改动倾斜实现时必须同步修改 `physics.js`：`tiltRoot.rotation.z = tiltZ`、`board.rotation.x = tiltX` 与 `ax = -g·sin(tiltZ)`、`az = g·cos(tiltZ)·sin(tiltX)` 严格对应。
 - 主循环只通过 `FixedClock.advance()` 决定物理步数；不要在 `frame()` 里另写时间累加或随意调高 `MAX_STEPS`，否则会重新引入慢动作或追帧死亡螺旋。
 - 小地图静态层按 `level` **对象引用**失效：如果将来改成复用同一个 level 对象做原地重置，必须显式调用 `ui.mmLevel = null` 强制重建缓存。
@@ -139,3 +180,6 @@ tests/shot-levels.mjs    实拍截图脚本
 - 全通关页内容较多，弹窗受 `max-height: min(88vh, 760px)` 限制；任何新增内容都要重跑「按钮完整可见」断言，避免底部按钮被裁。
 - 生涯统计新增字段必须同步 `Records` 的默认值、`sanitizeStats` 与构造函数读取三条路径；时长只能走 `addPlayTime()` 累积，并由 `flush()` / `Game.flushStats()` 在语义节点落盘，不要改成每帧 `save()`。
 - 机制事件在 `Game.handleEvents()` 中改用过 `checkpoint() / boost() / ice()`；若新增机制音效，同步在 `Sfx` 加方法并补浏览器 spy 断言，避免退回复用 `bump() / pickup()`。
+- 分享码只编码「能复现迷宫」的字段，**必须带 `seed`**；改编码格式要升 `VERSION` 并同步 `tests/verify.mjs` 的截断/篡改断言，否则老链接会静默解析成别的关卡。
+- 赛中教练只在 `Game.fail()` 触发，节流读 `this.now()`（可注入）而不是直接 `Date.now()`，否则节流断言无法构造时间序列。
+- 自定义关卡（AI / 分享码）在 `Game.clearLevel()` 走 `custom` 分支：只累计生涯次数，不写 `records.submit`、不 `unlock`；新增任何「非主线关卡」入口都要复用这条路径。
