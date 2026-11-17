@@ -42,13 +42,14 @@
 ## P6 参赛版约束（2026-11-16）
 - AI 能力集中在 `src/ai.js` + `studio/app.py`。**token 绝不进前端/仓库**：只在创空间 secret `MODELSCOPE_API_KEY`，前端靠后端注入的 `__MARBLE_AI_ENABLED__` 决定是否发请求；本地 `file://`/HTTP 不发请求（否则 404/CORS 破坏零错误断言）。改 AI 端点要同步 `SYSTEMS`（后端 prompt）与 `ai.js` 的 `call()`。
 - AI 生成的关卡必须经过 `sanitizeLevelInput`（数值钳制）→ `validateLevelInput`（buildLevel + BFS 可解性）才能加载；模型输出用 `extractJSON` 容错围栏。新增 AI 功能必须保留本地规则引擎降级路径，否则离线双击会坏。
-- `studio/` 是创空间部署源（docker, 端口 7860）。推送后必须删除 `studio/.git`（remote URL 含 token），`.gitignore` 排除 `studio/.git/`。线上 `.ms.show` 直连**不要带** SDK token 头，否则 403。
+- `studio/` 是创空间部署源（docker, 端口 7860）。推送后必须删除 `studio/.git`（remote URL 含 token），`.gitignore` 排除 `studio/.git/`。**线上核验通道已变（2026-11-17）**：`.ms.show` 直连现在一律 403（提示改走 API 专用地址），改用 `https://studio-{owner}-{repo}.api-inference.modelscope.net/…` 并带 `Authorization: Bearer <token>`，可回读 bundle/index/health 做 SHA 与注入核验；浏览器外壳页依旧拿不到 iframe context，行为验证仍靠「线上 SHA == 本地 + 本地浏览器全量用例」。
 - 当前线上：https://www.modelscope.cn/studios/hutuboy/marble-maze-ai （host `hutuboy-marble-maze-ai.ms.show`）。仓库已 public，创作手记在根目录 `创作手记.md`。更新线上要先 `npm run build` → 同步 4 个静态件到 `studio/` → 推送创空间 → 回读 bundle SHA 比对。
 
 ## 输入与部署约束（2026-11-16 · v1.2.2）
 - **任何全局键盘监听都必须先判断焦点**：`isTypingTarget()`（INPUT/TEXTAREA/SELECT/contenteditable）直接放行，不 `preventDefault`、不响应快捷键。历史上 AI 实验室输入框吞空格 + 回车触发 `advance()` 关弹窗，被当成「崩溃」；`game.advance()` 另有 `overlayType==='ailab'` 兜底。空格/回车落在 BUTTON/A 上要交回浏览器原生激活，否则与 `advance()` 双触发。新增输入框 / 新快捷键都要重跑浏览器三条断言（空格不被吞 / 回车只换行 / Ctrl+Enter 开玩）。
 - **创空间 push 不会自动重新部署**：必须再 `POST https://www.modelscope.cn/openapi/v1/studios/{owner}/{repo}/deploy`（Bearer token），否则线上一直是旧容器（曾空转 37 次轮询）。状态查询走 `GET /openapi/v1/studios/{owner}/{repo}` 的 `data.status`，`Building → Deploying → Running`。
-- **创空间仓库必须 LF**：Windows `core.autocrlf=true` 会把 `game.bundle.js` 以 CRLF 写进 blob，容器检出的字节数每行 +1（4334 行 → +4334 字节），线上 sha256 永远对不上本地。同步前 `git config core.autocrlf false core.eol lf`，用 `git ls-files --eol` 校验全为 `i/lf`，再用 `git cat-file -p HEAD:game.bundle.js | sha256sum` 与本地比对。
+- **创空间仓库必须 LF**：Windows `core.autocrlf=true` 会把 `game.bundle.js` 以 CRLF 写进 blob，容器检出的字节数每行 +1，线上 sha256 永远对不上本地。同步前 `git config core.autocrlf input core.eol lf`（工作区是 CRLF 也能归一化），用 `git ls-files --eol` 校验全为 `i/lf`，再用 `git rev-parse HEAD:game.bundle.js` 与 `git hash-object game.bundle.js` 比对（避免 PowerShell 管道转码污染字节）。studio 远端自带 LFS 规则 `.gitattributes`，merge 后会落到本地，已随主仓库提交。
+- **本机网络细节**：主仓库 local config 有 `http.proxy=127.0.0.1:52600`（代理软件未开时 push 失败），用 `git -c http.proxy= -c https.proxy= push` 临时绕过，不改配置；PowerShell 5.1 调 modelscope OpenAPI 要先 `[Net.ServicePointManager]::SecurityProtocol = Tls12`，下载线上文件用 curl.exe（PS 的 Invoke-WebRequest 对 .ms.show/api-inference 握手失败）。
 - 线上行为验证别指望浏览器：`www.modelscope.cn/studios/...?mode=full` 外壳页把游戏放在 iframe 里，本机 CDP 拿不到该 frame 的 context（frameTree 只有顶层）；直连 `.ms.show` 也会被 302 到外壳页。可靠做法是「线上 bundle SHA == 本地 SHA + 本地浏览器全量用例」。
 - `studio/app.py` 的 `Server.handle_error` 已忽略 ConnectionReset/BrokenPipe/ConnectionAborted（前端 8s AbortController 到点必然触发），别再改回默认。
 
