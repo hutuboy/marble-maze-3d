@@ -205,7 +205,7 @@ export class UI {
     if (!box || !Array.isArray(tips) || !tips.length) return;
     const tag = mode === 'ai' ? '魔搭 AI 教练建议' : '本地教练建议';
     box.innerHTML = `<div class="ai-coach-title">${tag}</div>`
-      + tips.map((t) => `<div class="ai-coach-row">· ${t}</div>`).join('');
+      + tips.map((t) => `<div class="ai-coach-row">${t}</div>`).join('');
   }
 
   // 赛中诊断：失败弹窗里的即时建议，与结算页的赛后复盘区分标题。
@@ -214,7 +214,7 @@ export class UI {
     if (!box || !Array.isArray(tips) || !tips.length) return;
     const tag = mode === 'ai' ? 'AI 教练 · 本局诊断' : '本地教练 · 本局诊断';
     box.innerHTML = `<div class="ai-coach-title">${tag}</div>`
-      + tips.map((t) => `<div class="ai-coach-row">· ${t}</div>`).join('');
+      + tips.map((t) => `<div class="ai-coach-row">${t}</div>`).join('');
   }
 
   hideOverlay() {

@@ -667,6 +667,7 @@ async function main() {
     `${shared.code.length} 字符 · ${shared.code.slice(0, 10)}…`);
 
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?from=share#l=${shared.code}` });
+  await send('Page.bringToFront');
   const shareReady = await waitFor(`!!(window.__marbleMaze && window.__marbleMaze.game)`, 12000, false);
   const replayed = await waitFor(`window.__marbleMaze.game.state === 'playing'`, 8000, false);
   const replay = await evalJS(`({
@@ -718,11 +719,13 @@ async function main() {
     `${demoProbe.timeBefore.toFixed(2)}s -> ${demoProbe.timeDuring.toFixed(2)}s`);
 
   await keyDown('ArrowRight', 'ArrowRight', 39);
-  await sleep(180);
+  const takeoverReady = await waitFor(
+    `window.__marbleMaze.game.demo === false && document.getElementById('toast').textContent.includes('已接管')`,
+    2000, false);
   const takeover = await evalJS(`({demo: window.__marbleMaze.game.demo, toast: document.getElementById('toast').textContent})`);
   await keyUp('ArrowRight', 'ArrowRight', 39);
   check('玩家键盘输入立即接管演示，AI 退场',
-    takeover.demo === false && takeover.toast.includes('已接管'), takeover.toast);
+    takeoverReady && takeover.demo === false && takeover.toast.includes('已接管'), takeover.toast);
 
   const demoFinish = await evalJS(`(async () => {
     const g = window.__marbleMaze.game;
