@@ -51,3 +51,12 @@
 - **创空间仓库必须 LF**：Windows `core.autocrlf=true` 会把 `game.bundle.js` 以 CRLF 写进 blob，容器检出的字节数每行 +1（4334 行 → +4334 字节），线上 sha256 永远对不上本地。同步前 `git config core.autocrlf false core.eol lf`，用 `git ls-files --eol` 校验全为 `i/lf`，再用 `git cat-file -p HEAD:game.bundle.js | sha256sum` 与本地比对。
 - 线上行为验证别指望浏览器：`www.modelscope.cn/studios/...?mode=full` 外壳页把游戏放在 iframe 里，本机 CDP 拿不到该 frame 的 context（frameTree 只有顶层）；直连 `.ms.show` 也会被 302 到外壳页。可靠做法是「线上 bundle SHA == 本地 SHA + 本地浏览器全量用例」。
 - `studio/app.py` 的 `Server.handle_error` 已忽略 ConnectionReset/BrokenPipe/ConnectionAborted（前端 8s AbortController 到点必然触发），别再改回默认。
+
+## v1.3 约束（2026-11-17）
+- **赛中教练**只在 `Game.fail()` 触发，闸门是 `canLiveCoach()`（每关 2 次、间隔 ≥8s），时间源必须走 `this.now()` 以便测试构造序列；遥测统一由 `buildTelemetry(phase, reason)` 产出，别在别处另拼字段。`zoneOf()` 方位词顺序是 `${col}${row}角`（「右下角」）。
+- **分享码**（`src/share.js`）编码 17 元组且**必须含 seed**；自实现 base64url，末组要 `n <<= pad*6` 才对得齐校验位。改格式要升 `VERSION` 并同步 verify.mjs 的往返/截断/篡改断言。`#l=` 只在启动与 `state==='menu'` 的 hashchange 时载入。
+- **自定义关卡（AI / 分享码）不得写主线成绩**：`clearLevel()` 走 `custom` 分支只 `addClear()`，不 `submit`、不 `unlock`。新增非主线关卡入口必须复用这条路径。
+- **自定义关卡结算弹窗高度预算已用满**：新增任何一行都会溢出（`modal max-height: min(88vh,760px)`）。分享码用 `<details>` 折叠并放在按钮下方；说明性文字并入副标题行。改完必须看 `scrollHeight == clientHeight` 并实拍确认按钮不被压。
+- **无障碍**：overlay 是 `role=dialog aria-modal`，状态与 toast 是 `aria-live=polite`，canvas 有 `role=img`；`prefers-reduced-motion` 下必须关掉闪白与震屏（对应浏览器断言）。
+- **CI**（`.github/workflows/ci.yml`）：除测试外还校验「bundle == 源码构建」「studio 静态件 == 根目录」「产物无 token」。主仓库 `.gitattributes` 是 `* text=auto eol=lf`，构建产物跨平台一致；改了静态件必须同步 `studio/`，否则 CI 红。
+- 本机 `Write`/`Edit` 对长中文段落偶发匹配失败，改 `src/` 里的中文模板时用小锚点或 python 脚本替换更稳。
