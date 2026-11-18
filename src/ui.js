@@ -510,29 +510,33 @@ const OVERLAY_HTML = {
       <button type="button" data-action="difficulty" data-mode="challenge" class="diff-chip${d.difficulty === 'challenge' ? ' active' : ''}">挑战</button>
       ${d.assist ? '<em>辅助档 · 成绩单独记录</em>' : ''}
     </div>
-    <div class="modal-cols">
-      <div>
-        <h3>怎么玩</h3>
-        <ul class="modal-list">
-          <li>键盘、鼠标或手机体感控制倾斜，松手自动回正</li>
-          <li>弹珠有惯性与滚动摩擦，撞墙会反弹减速</li>
-          <li>青色检查点激活后，失败可就地复活</li>
-          <li>橙色箭头加速带助推、浅蓝冰面打滑</li>
-          <li>黑色空洞会坠落，红色熔岩触碰即失败</li>
-        </ul>
-      </div>
-      <div><h3>操作</h3>${keyTable()}</div>
-    </div>
     <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}${d.cloud && d.cloud.enabled ? `<button type="button" id="cloudEntry" class="cloud-entry" data-action="leaderboard">☁ 云排行榜</button>` : ''}</div>
     <div class="level-picker">${levelCards(d)}</div>
     ${d.daily ? `<button class="daily-btn" data-action="daily">
-      <span class="daily-tag">每日挑战 · ${d.daily.date}</span>
-      <span class="daily-sub">每天一座新迷宫 · 全球同图${d.daily.best ? ` · 今日最佳 ${fmtTime(d.daily.best.time)}` : ' · 尚无记录'}</span>
+      <span class="daily-icon">▣</span>
+      <span class="daily-text"><span class="daily-tag">每日挑战 · ${d.daily.date}</span><span class="daily-sub">每天一座新迷宫 · 全球同图${d.daily.best ? ` · 今日最佳 ${fmtTime(d.daily.best.time)}` : ' · 尚无记录'}</span></span>
+      <span class="daily-go">›</span>
     </button>` : ''}
     <div class="modal-btns">
-      <button class="primary-btn" data-action="start">从第 1 关开始 <span>↵</span></button>
-      <button class="ghost-btn" data-action="ai-lab">AI 实验室</button>
+      <button class="primary-btn btn-start" data-action="start"><span class="btn-ico">▶</span>从第 1 关开始 <span class="key">↵</span></button>
+      <button class="ghost-btn btn-ai" data-action="ai-lab"><span class="btn-ico">✦</span>AI 实验室</button>
     </div>
+    <details class="help-fold">
+      <summary>玩法与操作说明 <span class="fold-hint">展开查看 ▾</span></summary>
+      <div class="modal-cols">
+        <div>
+          <h3>怎么玩</h3>
+          <ul class="modal-list">
+            <li>键盘、鼠标或手机体感控制倾斜，松手自动回正</li>
+            <li>弹珠有惯性与滚动摩擦，撞墙会反弹减速</li>
+            <li>青色检查点激活后，失败可就地复活</li>
+            <li>橙色箭头加速带助推、浅蓝冰面打滑</li>
+            <li>黑色空洞会坠落，红色熔岩触碰即失败</li>
+          </ul>
+        </div>
+        <div><h3>操作</h3>${keyTable()}</div>
+      </div>
+    </details>
     <p class="modal-foot">纯前端运行 · AI 功能由魔搭提供（离线自动降级）${d.persistent === false ? ' · 本机存储不可用，成绩仅本次有效' : ''}</p>`,
 
   ailab: (d) => `

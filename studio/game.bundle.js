@@ -4240,29 +4240,33 @@ void main() {
       <button type="button" data-action="difficulty" data-mode="challenge" class="diff-chip${n.difficulty==="challenge"?" active":""}">\u6311\u6218</button>
       ${n.assist?"<em>\u8F85\u52A9\u6863 \xB7 \u6210\u7EE9\u5355\u72EC\u8BB0\u5F55</em>":""}
     </div>
-    <div class="modal-cols">
-      <div>
-        <h3>\u600E\u4E48\u73A9</h3>
-        <ul class="modal-list">
-          <li>\u952E\u76D8\u3001\u9F20\u6807\u6216\u624B\u673A\u4F53\u611F\u63A7\u5236\u503E\u659C\uFF0C\u677E\u624B\u81EA\u52A8\u56DE\u6B63</li>
-          <li>\u5F39\u73E0\u6709\u60EF\u6027\u4E0E\u6EDA\u52A8\u6469\u64E6\uFF0C\u649E\u5899\u4F1A\u53CD\u5F39\u51CF\u901F</li>
-          <li>\u9752\u8272\u68C0\u67E5\u70B9\u6FC0\u6D3B\u540E\uFF0C\u5931\u8D25\u53EF\u5C31\u5730\u590D\u6D3B</li>
-          <li>\u6A59\u8272\u7BAD\u5934\u52A0\u901F\u5E26\u52A9\u63A8\u3001\u6D45\u84DD\u51B0\u9762\u6253\u6ED1</li>
-          <li>\u9ED1\u8272\u7A7A\u6D1E\u4F1A\u5760\u843D\uFF0C\u7EA2\u8272\u7194\u5CA9\u89E6\u78B0\u5373\u5931\u8D25</li>
-        </ul>
-      </div>
-      <div><h3>\u64CD\u4F5C</h3>${F_()}</div>
-    </div>
     <div class="modal-section-title">\u9009\u62E9\u5173\u5361 \xB7 \u7D2F\u8BA1 ${n.totalStars||0} / ${n.maxStars||9} \u2605 \xB7 \u751F\u6DAF\u901A\u5173 ${n.clearCount||0} \u6B21 \xB7 \u6E38\u73A9 ${D_(n.playTime)}${n.cloud&&n.cloud.enabled?'<button type="button" id="cloudEntry" class="cloud-entry" data-action="leaderboard">\u2601 \u4E91\u6392\u884C\u699C</button>':""}</div>
     <div class="level-picker">${z_(n)}</div>
     ${n.daily?`<button class="daily-btn" data-action="daily">
-      <span class="daily-tag">\u6BCF\u65E5\u6311\u6218 \xB7 ${n.daily.date}</span>
-      <span class="daily-sub">\u6BCF\u5929\u4E00\u5EA7\u65B0\u8FF7\u5BAB \xB7 \u5168\u7403\u540C\u56FE${n.daily.best?` \xB7 \u4ECA\u65E5\u6700\u4F73 ${li(n.daily.best.time)}`:" \xB7 \u5C1A\u65E0\u8BB0\u5F55"}</span>
+      <span class="daily-icon">\u25A3</span>
+      <span class="daily-text"><span class="daily-tag">\u6BCF\u65E5\u6311\u6218 \xB7 ${n.daily.date}</span><span class="daily-sub">\u6BCF\u5929\u4E00\u5EA7\u65B0\u8FF7\u5BAB \xB7 \u5168\u7403\u540C\u56FE${n.daily.best?` \xB7 \u4ECA\u65E5\u6700\u4F73 ${li(n.daily.best.time)}`:" \xB7 \u5C1A\u65E0\u8BB0\u5F55"}</span></span>
+      <span class="daily-go">\u203A</span>
     </button>`:""}
     <div class="modal-btns">
-      <button class="primary-btn" data-action="start">\u4ECE\u7B2C 1 \u5173\u5F00\u59CB <span>\u21B5</span></button>
-      <button class="ghost-btn" data-action="ai-lab">AI \u5B9E\u9A8C\u5BA4</button>
+      <button class="primary-btn btn-start" data-action="start"><span class="btn-ico">\u25B6</span>\u4ECE\u7B2C 1 \u5173\u5F00\u59CB <span class="key">\u21B5</span></button>
+      <button class="ghost-btn btn-ai" data-action="ai-lab"><span class="btn-ico">\u2726</span>AI \u5B9E\u9A8C\u5BA4</button>
     </div>
+    <details class="help-fold">
+      <summary>\u73A9\u6CD5\u4E0E\u64CD\u4F5C\u8BF4\u660E <span class="fold-hint">\u5C55\u5F00\u67E5\u770B \u25BE</span></summary>
+      <div class="modal-cols">
+        <div>
+          <h3>\u600E\u4E48\u73A9</h3>
+          <ul class="modal-list">
+            <li>\u952E\u76D8\u3001\u9F20\u6807\u6216\u624B\u673A\u4F53\u611F\u63A7\u5236\u503E\u659C\uFF0C\u677E\u624B\u81EA\u52A8\u56DE\u6B63</li>
+            <li>\u5F39\u73E0\u6709\u60EF\u6027\u4E0E\u6EDA\u52A8\u6469\u64E6\uFF0C\u649E\u5899\u4F1A\u53CD\u5F39\u51CF\u901F</li>
+            <li>\u9752\u8272\u68C0\u67E5\u70B9\u6FC0\u6D3B\u540E\uFF0C\u5931\u8D25\u53EF\u5C31\u5730\u590D\u6D3B</li>
+            <li>\u6A59\u8272\u7BAD\u5934\u52A0\u901F\u5E26\u52A9\u63A8\u3001\u6D45\u84DD\u51B0\u9762\u6253\u6ED1</li>
+            <li>\u9ED1\u8272\u7A7A\u6D1E\u4F1A\u5760\u843D\uFF0C\u7EA2\u8272\u7194\u5CA9\u89E6\u78B0\u5373\u5931\u8D25</li>
+          </ul>
+        </div>
+        <div><h3>\u64CD\u4F5C</h3>${F_()}</div>
+      </div>
+    </details>
     <p class="modal-foot">\u7EAF\u524D\u7AEF\u8FD0\u884C \xB7 AI \u529F\u80FD\u7531\u9B54\u642D\u63D0\u4F9B\uFF08\u79BB\u7EBF\u81EA\u52A8\u964D\u7EA7\uFF09${n.persistent===!1?" \xB7 \u672C\u673A\u5B58\u50A8\u4E0D\u53EF\u7528\uFF0C\u6210\u7EE9\u4EC5\u672C\u6B21\u6709\u6548":""}</p>`,ailab:n=>`
     <div class="modal-tag">AI LAB \xB7 MODELSCOPE</div>
     <h1>AI \u5B9E\u9A8C\u5BA4</h1>

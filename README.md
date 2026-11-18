@@ -3,7 +3,7 @@
 [![CI](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml/badge.svg)](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-3ddc97.svg)](LICENSE)
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-0984e3.svg)](#技术方案)
-[![Tests](https://img.shields.io/badge/tests-157%20%2B%20106-00b894.svg)](#验证基线)
+[![Tests](https://img.shields.io/badge/tests-157%20%2B%20108-00b894.svg)](#验证基线)
 
 > **AI+∞ 开发者创作大赛第三期「AI 造游戏」参赛作品**
 > 在线试玩（魔搭创空间，AI 功能与云存档已启用）：**https://www.modelscope.cn/studios/hutuboy/marble-maze-ai**
@@ -196,7 +196,7 @@ MIT，见 [LICENSE](LICENSE)。游戏本体（Three.js 为 MIT）与全部素材
 ## 验证基线
 
 - `npm test`：**157 项通过**（物理/可解性、P1 机制与成绩、固定步长时钟、画质决策、存档容错、P3/P4/P5 断言、AI 四能力与四层容错、赛中教练节流与遥测、教练反馈闭环、分享码编解码与自定义关卡成绩隔离、自动试玩 Agent 三关逐帧复现、每日挑战种子确定性与成绩隔离全链路、云存档用户名跨端一致性与清洗/榜单防御/请求契约）。
-- `npm run test:browser`：**106 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键、失败弹窗内的赛中教练诊断、分享链接复现同一座迷宫、AI 演示启动/接管/不记生涯/终点回起点、每日挑战入口/开局/成绩隔离/结算页演示入口、无障碍语义与减少动态效果、本地零云请求与离线榜单弹窗。
+- `npm run test:browser`：**108 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键、失败弹窗内的赛中教练诊断、分享链接复现同一座迷宫、AI 演示启动/接管/不记生涯/终点回起点、每日挑战入口/开局/成绩隔离/结算页演示入口、无障碍语义与减少动态效果、本地零云请求与离线榜单弹窗。
 - 线上云存档另用 `tools/cloud-e2e.mjs`（需先本地起 `studio/app.py` 于 7901 端口）做端到端验证：开关注入、匿名身份回填、通关上云、自己上榜排名，7 项全过。
 - CI（GitHub Actions）会重跑 `npm test`，并校验 `game.bundle.js` 与 `src/` 构建结果一致、`studio/` 静态件与根目录一致、产物中不存在疑似密钥。
 - 改动倾斜实现时必须同步修改 `physics.js`：`tiltRoot.rotation.z = tiltZ`、`board.rotation.x = tiltX` 与 `ax = -g·sin(tiltZ)`、`az = g·cos(tiltZ)·sin(tiltX)` 严格对应。

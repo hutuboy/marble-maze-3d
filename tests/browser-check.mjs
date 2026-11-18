@@ -182,6 +182,9 @@ async function main() {
       goalBeam: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeam),
       goalBeacon: !!(window.__marbleMaze && window.__marbleMaze.view.goalBeacon),
       goalToneMapped: window.__marbleMaze && window.__marbleMaze.view.mat.goalBeam.toneMapped,
+      helpFoldOpen: (() => { const d = document.querySelector('#modal .help-fold'); return d ? d.open : null; })(),
+      helpFoldText: (() => { const d = document.querySelector('#modal .help-fold'); return d ? d.textContent : ''; })(),
+      startBtn: (() => { const b = document.querySelector('#modal [data-action="start"]'); return b ? b.className : ''; })(),
       modalScroll: document.getElementById('modal').scrollHeight,
       modalClient: document.getElementById('modal').clientHeight,
       startBtnVisible: (() => {
@@ -227,6 +230,20 @@ async function main() {
   check('菜单内容完整可见，开始按钮无需滚动',
     init.modalScroll <= init.modalClient + 2 && init.startBtnVisible,
     `内容 ${init.modalScroll}px / 可视 ${init.modalClient}px / 按钮可见 ${init.startBtnVisible}`);
+  check('玩法与操作收进默认折叠的二级入口，主按钮样式醒目',
+    init.helpFoldOpen === false && init.helpFoldText.includes('玩法与操作说明')
+    && init.helpFoldText.includes('怎么玩') && init.helpFoldText.includes('操作')
+    && init.startBtn.includes('btn-start'),
+    `折叠态 ${init.helpFoldOpen} / 主按钮 ${init.startBtn}`);
+  const foldToggle = await evalJS(`(() => {
+    const d = document.querySelector('#modal .help-fold');
+    d.open = true;
+    const openOk = d.open && d.textContent.includes('W A S D / 方向键');
+    d.open = false;
+    return { openOk, closed: !d.open };
+  })()`);
+  check('折叠入口可展开查看操作说明并可再次收起',
+    foldToggle.openOk && foldToggle.closed);
   // 无头 swiftshader 帧率偏低会触发自动降级，固定高档保证取证截图一致。
   await evalJS(`window.__marbleMaze.quality.setMode('high')`);
   await shot('shot-menu.png');

@@ -273,6 +273,43 @@ html, body {
 .modal h1 { margin: 0 0 6px; font-size: 28px; font-weight: 600; letter-spacing: 1px; }
 .modal h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: 1px; }
 .modal-lead { margin: 0 auto 8px; font-size: 13px; color: #b9cddd; line-height: 1.65; max-width: 520px; }
+/* 玩法说明：默认收起的二级入口，展开后才占用高度，首页保持清爽。 */
+.help-fold {
+  margin: 8px 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(90, 140, 185, 0.05);
+  text-align: left;
+}
+.help-fold summary {
+  cursor: pointer;
+  list-style: none;
+  outline: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  letter-spacing: 1px;
+  color: #9fb8cd;
+  user-select: none;
+}
+.help-fold summary::-webkit-details-marker { display: none; }
+.help-fold summary::before {
+  content: '?';
+  flex: 0 0 auto;
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  color: #7fd4ff;
+  border: 1px solid rgba(127, 212, 255, 0.5);
+  border-radius: 50%;
+}
+.fold-hint { margin-left: auto; color: #6f8ba3; font-size: 10.5px; letter-spacing: 0; }
+.help-fold[open] .fold-hint { display: none; }
+.help-fold summary:hover { color: #cfe3f3; background: rgba(90, 140, 185, 0.10); }
+.help-fold[open] summary { border-bottom: 1px solid var(--line); }
+.help-fold .modal-cols { padding: 12px 14px 6px; }
 .modal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; text-align: left; margin-bottom: 6px; }
 .modal-list { margin: 0; padding-left: 17px; font-size: 12px; color: #b9cddd; line-height: 1.72; }
 
@@ -338,13 +375,35 @@ kbd {
   color: #04121c;
   background: linear-gradient(180deg, #8ce0ff, #4bb6ef);
   border: 1px solid #a9e8ff;
+  box-shadow: 0 4px 16px rgba(75, 182, 239, 0.28);
 }
-.primary-btn:hover { transform: translateY(-1px); background: linear-gradient(180deg, #a6e9ff, #62c4f5); }
-.primary-btn span { font-size: 11px; opacity: 0.6; margin-left: 8px; }
+.primary-btn:hover { transform: translateY(-1px); background: linear-gradient(180deg, #a6e9ff, #62c4f5); box-shadow: 0 6px 20px rgba(75, 182, 239, 0.4); }
+.primary-btn > span:not(.btn-ico) { font-size: 11px; opacity: 0.6; margin-left: 8px; }
 .ghost-btn { color: var(--text); background: transparent; border: 1px solid var(--line-strong); }
 .ghost-btn:hover { background: rgba(90, 140, 185, 0.16); }
-.ghost-btn span { font-size: 11px; opacity: 0.55; margin-left: 8px; }
-.modal-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.ghost-btn > span:not(.btn-ico) { font-size: 11px; opacity: 0.55; margin-left: 8px; }
+
+/* 首页主按钮：开始更醒目，AI 实验室作为清晰的次级入口。 */
+.btn-start {
+  font-size: 15px;
+  padding: 13px 34px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #9fe8ff 0%, #46b6f0 55%, #2a96d8 100%);
+  border: 1px solid #b6eeff;
+  box-shadow: 0 5px 20px rgba(46, 158, 220, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.btn-start:hover { background: linear-gradient(180deg, #b4eeff 0%, #56c2f6 55%, #349fe2 100%); box-shadow: 0 8px 26px rgba(46, 158, 220, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.5); }
+.btn-ico { font-size: 12px; margin-right: 8px; vertical-align: 1px; opacity: 0.9; }
+.btn-start .btn-ico { color: #063c58; }
+.btn-ai {
+  color: #cfe9ff;
+  background: rgba(80, 160, 220, 0.10);
+  border: 1px solid rgba(130, 195, 240, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(90, 170, 225, 0.08);
+}
+.btn-ai:hover { background: rgba(80, 160, 220, 0.20); border-color: rgba(160, 215, 250, 0.8); }
+.btn-ai .btn-ico { color: #8fd4ff; }
+.modal-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
 .modal-foot { margin: 10px 0 0; font-size: 11px; color: #6f8497; }
 
 /* AI 实验室与教练建议 */
@@ -389,29 +448,32 @@ kbd {
   margin: 0 0 6px;
   text-align: left;
 }
-/* 每日挑战入口：紧凑单行，不挤占菜单高度预算（modal max-height 断言敏感）。 */
+/* 每日挑战入口：左侧暖色条 + 图标 + 箭头，醒目但不显著增加高度（max-height 断言敏感）。 */
 .daily-btn {
   font-family: inherit;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 11px;
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 12px;
-  margin: 0 0 6px;
+  padding: 7px 13px;
+  margin: 0 0 8px;
   font-size: 12px;
+  text-align: left;
   color: var(--text);
-  background: rgba(255, 180, 84, 0.08);
-  border: 1px solid rgba(255, 180, 84, 0.35);
+  background: linear-gradient(90deg, rgba(255, 176, 72, 0.16), rgba(255, 176, 72, 0.04));
+  border: 1px solid rgba(255, 180, 84, 0.4);
+  border-left: 3px solid #ffb347;
   border-radius: 9px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
 }
-.daily-btn:hover { background: rgba(255, 180, 84, 0.16); border-color: rgba(255, 180, 84, 0.6); }
+.daily-btn:hover { background: linear-gradient(90deg, rgba(255, 176, 72, 0.26), rgba(255, 176, 72, 0.08)); border-color: rgba(255, 180, 84, 0.7); transform: translateY(-1px); }
+.daily-icon { flex: 0 0 auto; font-size: 17px; color: #ffc46b; line-height: 1; }
+.daily-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .daily-tag { font-weight: 600; color: #ffce8a; letter-spacing: 1px; }
-.daily-sub { font-size: 11px; color: #9fb4c8; }
+.daily-sub { font-size: 10.5px; color: #9fb4c8; }
+.daily-go { margin-left: auto; flex: 0 0 auto; font-size: 20px; color: #ffb347; opacity: 0.75; line-height: 1; }
 
 /* 云排行榜入口：内嵌在关卡统计行右侧，float 不额外占行高。 */
 .cloud-entry {
