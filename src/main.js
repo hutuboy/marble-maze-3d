@@ -401,6 +401,8 @@ function boot(view) {
     again: () => game.start(),
     'copy-card': () => copyScoreCard(),
     'copy-share': () => copyShareLink(),
+    leaderboard: () => game.showLeaderboard(),
+    'refresh-board': () => game.showLeaderboard(),
     menu: () => game.toMenu()
   };
   document.getElementById('overlay').addEventListener('click', (e) => {
@@ -451,6 +453,9 @@ function boot(view) {
     game, view, ui, clock, quality, motionAxis, toggleMotion,
     handleContextLost, handleContextRestored, showUnsupported,
     cycleDifficulty, copyScoreCard, copyShareLink, shareLink,
+    showLeaderboard: () => game.showLeaderboard(),
+    cloudStatus: () => game.cloudStatus(),
+    cloudBoard: () => game.cloudBoard,
     startDemo: () => game.startDemo(),
     stopDemo: () => game.stopDemo(true),
     setJoystick: (dx, dz) => {

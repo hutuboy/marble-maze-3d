@@ -1287,7 +1287,41 @@ async function main() {
     && fallback.text.includes('WebGL2') && fallback.pill === '图形不可用',
     fallback.text.slice(0, 40).replace(/\n/g, ' '));
   await evalJS(`window.__marbleMaze.game.toMenu()`);
-  check('P2 全流程无控制台错误', errors.length === 0,
+
+  // 云存档 / 排行榜：本地静态服务不注入开关，前端必须零云请求、静默降级。
+  const cloudLocal = await evalJS(`({
+    flag: !!window.__MARBLE_CLOUD_ENABLED__,
+    enabled: window.__marbleMaze.game.cloud.enabled,
+    online: window.__marbleMaze.game.cloud.online,
+    status: window.__marbleMaze.cloudStatus(),
+    entry: !!document.getElementById('cloudEntry')
+  })`);
+  check('本地模式云开关未注入、零云请求、菜单无云入口',
+    cloudLocal.flag === false && cloudLocal.enabled === false
+    && cloudLocal.online === false && cloudLocal.status.enabled === false
+    && cloudLocal.entry === false,
+    `flag=${cloudLocal.flag} enabled=${cloudLocal.enabled} entry=${cloudLocal.entry}`);
+
+  // 即使离线，排行榜弹窗也能打开并给出明确提示、不溢出、按钮可见。
+  await evalJS(`window.__marbleMaze.showLeaderboard()`);
+  await waitFor(`window.__marbleMaze.ui.overlayType === 'leaderboard'`, 2000, false);
+  const boardUI = await evalJS(`(() => {
+    const m = document.getElementById('modal');
+    const back = m.querySelector('[data-action="menu"]');
+    return {
+      title: m.innerText.slice(0, 30),
+      offline: m.innerText.includes('离线模式') || m.innerText.includes('未连接云端'),
+      scroll: m.scrollHeight, client: m.clientHeight,
+      btnVisible: !!back && back.getBoundingClientRect().bottom <= m.getBoundingClientRect().bottom + 1
+    };
+  })()`);
+  check('离线排行榜弹窗给出明确提示且按钮完整可见',
+    boardUI.title.includes('云排行榜') && boardUI.offline
+    && boardUI.scroll <= boardUI.client + 2 && boardUI.btnVisible,
+    `内容 ${boardUI.scroll}/可视 ${boardUI.client} 离线提示 ${boardUI.offline}`);
+  await evalJS(`window.__marbleMaze.game.toMenu()`);
+
+  check('P2 全流程无控制台错误（含本地零云请求）', errors.length === 0,
     errors.slice(0, 2).join(' | ') || '无');
 
   if (errors.length) errors.slice(0, 8).forEach((e) => console.log('    ' + e));

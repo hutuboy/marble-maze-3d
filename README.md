@@ -3,11 +3,11 @@
 [![CI](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml/badge.svg)](https://github.com/hutuboy/marble-maze-3d/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-3ddc97.svg)](LICENSE)
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-0984e3.svg)](#技术方案)
-[![Tests](https://img.shields.io/badge/tests-144%20%2B%20104-00b894.svg)](#验证基线)
+[![Tests](https://img.shields.io/badge/tests-157%20%2B%20106-00b894.svg)](#验证基线)
 
 > **AI+∞ 开发者创作大赛第三期「AI 造游戏」参赛作品**
-> 在线试玩（魔搭创空间，AI 功能已启用）：**https://www.modelscope.cn/studios/hutuboy/marble-maze-ai**
-> 本地双击 `index.html` 也能完整游玩，AI 功能会自动降级为本地规则引擎。
+> 在线试玩（魔搭创空间，AI 功能与云存档已启用）：**https://www.modelscope.cn/studios/hutuboy/marble-maze-ai**
+> 本地双击 `index.html` 也能完整游玩，AI 功能会自动降级为本地规则引擎；云存档/排行榜仅线上可用，本地不影响离线体验。
 
 ![游戏画面](docs/playing.png)
 
@@ -18,6 +18,8 @@
 | 每日挑战 | AI 自动试玩演示 |
 | --- | --- |
 | ![每日挑战](docs/daily.png) | ![AI 演示](docs/demo.png) |
+
+> **演示视频**（七段分镜 + 中文解说、实机捕获）：[docs/演示视频.mp4](docs/演示视频.mp4)，已发布[小红书](https://www.xiaohongshu.com/discovery/item/6afc1331000000002501e322?source=webshare&xhsshare=pc_web&xsec_token=GBLZpfx3PIoJO5SMuflIu4pPAWBbvqtkHNVi5ui2Sm6dI=&xsec_source=pc_share)；制作管线见 `tools/video/`。
 
 ## 30 秒上手
 
@@ -37,6 +39,7 @@ npm start          # 打开 http://localhost:5173
 - **物理**：自研确定性求解器（固定 120 Hz 步长 + 子步连续碰撞检测，圆 vs AABB 墙体），含倾斜重力投影、惯性、滚动阻尼、法向反弹与切向滑动；加速带冲量、冰面低摩擦也在同一求解器内实现，未使用第三方物理引擎。
 - **资源**：地板/弹珠/熔岩纹理、环境反射贴图、迷宫几何、加速带箭头、终点粒子、全部音效均由 Canvas / Three.js 几何体 / WebAudio 在运行时程序化生成，无图片、模型、音频文件。
 - **AI**：`src/ai.js` 提供设计师 / 教练 / 叙事 / 训练报告四项能力，经魔搭创空间后端 `studio/app.py` 代理调用 Qwen 模型链（带降级与配额闸门）；token 只作服务端 secret，前端永不持有。离线自动降级为规则引擎。
+- **云存档 / 排行榜**：`src/cloud.js` + `studio/app.py` 提供免注册云能力。后端给每台设备签发一个匿名 HttpOnly Cookie（`mm_uid`），用户名由 uid 经 FNV-1a **稳定派生**（如「疾风刺猬07」），无需注册也不存名字表；成绩落在创空间持久化目录 `/mnt/workspace`，原子写入 + 文件锁，逐项取历史最优防回退。主线通关自动上云，自定义/每日/演示关卡不写榜。本地模式零请求、静默降级。
 - **产物**：`index.html` + `styles.css` + `game.bundle.js` + `favicon.svg` 即可完整运行；`src/` 为可读源码，`studio/` 为创空间部署源，`package.json` 提供重新构建与本地服务脚本。
 
 ## 启动
@@ -64,6 +67,7 @@ npm start          # 打开 http://localhost:5173
 | 窄屏「地图」按钮 | 展开 / 收起小地图浮层（≤640px 时不再直接隐藏） |
 | 顶部「AI 演示」按钮 | 定制关卡（AI / 分享 / 每日）专属：Agent 自动代打，任意操作即可接管 |
 | 主菜单「每日挑战」 | 日期种子全球同图，成绩按日期分键，不影响主线解锁 |
+| 主菜单「☁ 云排行榜」（仅线上） | 免注册查看云端排行与自己的排名；身份由浏览器 Cookie 自动生成 |
 | P / Esc | 暂停、继续 |
 | R | 从起点彻底重开本关（会清空已激活的检查点） |
 | M | 音效开关 |
@@ -130,6 +134,14 @@ npm start          # 打开 http://localhost:5173
 - **部署与降级**：创空间后端 `studio/app.py`（纯标准库）托管静态文件并注入 AI 开关，`/api/ai/*` 代理 Qwen 模型链；本地 HTTP / `file://` 不注入开关，不发任何网络请求，保证双击即玩、零控制台错误。
 - **成绩隔离**：AI 关卡与分享关卡的 id 是随机的，通关**只计入生涯次数**，不写主线最佳成绩、也不额外解锁——避免自定义关卡污染主线榜单。
 
+## 云存档与排行榜（免注册 · 线上）
+
+- **零注册身份**：首次打开时后端签发一个匿名 `mm_uid` Cookie（HttpOnly + SameSite=Lax + 一年有效），刷新/重开自动识别同一台设备；用户名由 uid 经 **FNV-1a 稳定派生**成「疾风刺猬07」这类可识别的昵称——不收集任何个人信息，也不需要账号密码。
+- **云存档**：主线三关通关后自动把最佳成绩（用时/得分/星级）与生涯统计上传，服务端按字段取历史最优合并，低分重玩不会覆盖高分。数据存于创空间持久化目录 `/mnt/workspace`，原子写入 + 文件锁，防止并发写坏。
+- **排行榜**：主菜单右上角「☁ 云排行」进入，按总分排序展示 Top 10，并高亮自己的名次与成绩；自己的身份名会异步回填到入口按钮。
+- **隔离与安全**：只有主线成绩上榜；每日挑战、AI/分享关卡、演示模式一律不写榜（与本地成绩隔离口径一致）。上传字段白名单 + 数值钳制，畸形 key / 越界分数 / 伪造昵称全部丢弃；身份只认服务端 Cookie，不信任前端传来的 uid。
+- **纯本地零影响**：`file://` 与本地 HTTP 不注入云开关，前端不发任何云请求；云能力不可用时排行榜弹窗给出明确离线提示，游戏完全照常。
+
 ## AI 自动试玩 Agent 与每日挑战（v1.4）
 
 - **自动试玩 Agent**：`src/autopilot.js` 是纯逻辑的自动玩家——读弹珠状态、沿 BFS 安全路径规划、每物理步输出归一化倾角，与键盘输入同一套语义。Node 与浏览器共用同一份实现：游戏内「AI 演示」逐帧调用 `nextAxis()`，玩家任意输入立即接管；演示不计成绩、不记生涯时长，抵达终点展示「Xs · N 步决策」后回到起点。
@@ -157,11 +169,13 @@ src/audio.js        程序化音效（碰撞/拾取/失败/通关 + 检查点/�
 src/ai.js           AI 设计师/教练/叙事/训练报告，含本地规则引擎降级与教练闭环
 src/autopilot.js    AI 自动试玩 Agent（BFS 路径跟踪 + 全精度动作序列记录/回放）
 src/share.js        AI 关卡分享码编解码（base64url + 校验位 + 可玩性校验）
-studio/             魔搭创空间部署源（静态托管 + AI 代理端点 + secret 注入）
+src/cloud.js        云存档/排行服务（匿名 Cookie 身份、用户名派生、字段清洗、榜单防御、静默降级）
+studio/             魔搭创空间部署源（静态托管 + AI 代理 + 云存档/排行榜 API + secret/inject 开关）
 src/main.js         入口、键鼠/体感输入、主循环、分享码载入
 build.mjs           构建脚本
 serve.mjs           零依赖静态服务器
-docs/               README 截图与分享封面
+docs/               README 截图、分享封面与演示视频
+tools/video/        演示视频制作管线（分镜解说词 / TTS / CDP 实机捕获 / 合成）
 .github/workflows/  CI：逻辑测试 + 构建一致性 + 产物密钥扫描
 tests/verify.mjs    纯 Node 逻辑与物理验证
 tests/browser-check.mjs  无头 Edge 全流程与零错误验证
@@ -181,8 +195,9 @@ MIT，见 [LICENSE](LICENSE)。游戏本体（Three.js 为 MIT）与全部素材
 
 ## 验证基线
 
-- `npm test`：**144 项通过**（物理/可解性、P1 机制与成绩、固定步长时钟、画质决策、存档容错、P3/P4/P5 断言、AI 四能力与四层容错、赛中教练节流与遥测、教练反馈闭环、分享码编解码与自定义关卡成绩隔离、自动试玩 Agent 三关逐帧复现、每日挑战种子确定性与成绩隔离全链路）。
-- `npm run test:browser`：**104 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键、失败弹窗内的赛中教练诊断、分享链接复现同一座迷宫、AI 演示启动/接管/不记生涯/终点回起点、每日挑战入口/开局/成绩隔离/结算页演示入口、无障碍语义与减少动态效果。
+- `npm test`：**157 项通过**（物理/可解性、P1 机制与成绩、固定步长时钟、画质决策、存档容错、P3/P4/P5 断言、AI 四能力与四层容错、赛中教练节流与遥测、教练反馈闭环、分享码编解码与自定义关卡成绩隔离、自动试玩 Agent 三关逐帧复现、每日挑战种子确定性与成绩隔离全链路、云存档用户名跨端一致性与清洗/榜单防御/请求契约）。
+- `npm run test:browser`：**106 项通过**，覆盖 HTTP 与 `file://` 双模式、零控制台错误、检查点复活、选关解锁、星级持久化、加速带/冰面、体感映射、窄屏浮层、菜单无溢出、小地图缓存命中与尺寸自适应、终点金色光柱、一次性引导持久化、难度切换与分档隔离、全通关页与成绩卡复制、虚拟摇杆、画质档位生效、上下文丢失/恢复、触屏双指旋转、反复切关资源不增长、机制专属音效、生涯统计落盘与菜单展示、AI 输入框内打字不误触游戏快捷键、失败弹窗内的赛中教练诊断、分享链接复现同一座迷宫、AI 演示启动/接管/不记生涯/终点回起点、每日挑战入口/开局/成绩隔离/结算页演示入口、无障碍语义与减少动态效果、本地零云请求与离线榜单弹窗。
+- 线上云存档另用 `tools/cloud-e2e.mjs`（需先本地起 `studio/app.py` 于 7901 端口）做端到端验证：开关注入、匿名身份回填、通关上云、自己上榜排名，7 项全过。
 - CI（GitHub Actions）会重跑 `npm test`，并校验 `game.bundle.js` 与 `src/` 构建结果一致、`studio/` 静态件与根目录一致、产物中不存在疑似密钥。
 - 改动倾斜实现时必须同步修改 `physics.js`：`tiltRoot.rotation.z = tiltZ`、`board.rotation.x = tiltX` 与 `ax = -g·sin(tiltZ)`、`az = g·cos(tiltZ)·sin(tiltX)` 严格对应。
 - 主循环只通过 `FixedClock.advance()` 决定物理步数；不要在 `frame()` 里另写时间累加或随意调高 `MAX_STEPS`，否则会重新引入慢动作或追帧死亡螺旋。
@@ -197,6 +212,7 @@ MIT，见 [LICENSE](LICENSE)。游戏本体（Three.js 为 MIT）与全部素材
 - 机制事件在 `Game.handleEvents()` 中改用过 `checkpoint() / boost() / ice()`；若新增机制音效，同步在 `Sfx` 加方法并补浏览器 spy 断言，避免退回复用 `bump() / pickup()`。
 - 分享码只编码「能复现迷宫」的字段，**必须带 `seed`**；改编码格式要升 `VERSION` 并同步 `tests/verify.mjs` 的截断/篡改断言，否则老链接会静默解析成别的关卡。
 - 赛中教练只在 `Game.fail()` 触发，节流读 `this.now()`（可注入）而不是直接 `Date.now()`，否则节流断言无法构造时间序列。
-- 自定义关卡（AI / 分享码 / 每日挑战）在 `Game.clearLevel()` 走 `custom` 分支：只累计生涯次数，不写 `records.submit`、不 `unlock`；新增任何「非主线关卡」入口都要复用这条路径。每日成绩另走 `records.submitDaily()`，键必须是 `YYYY-MM-DD`，只保留最近 30 天。
+- 自定义关卡（AI / 分享码 / 每日挑战）在 `Game.clearLevel()` 走 `custom` 分支：只累计生涯次数，不写 `records.submit`、不 `unlock`；新增任何「非主线关卡」入口都要复用这条路径。每日成绩另走 `records.submitDaily()`，键必须是 `YYYY-MM-DD`，只保留最近 30 天。云同步 `Game.syncCloud()` 同样跳过 custom / 每日 / 演示关卡——新入口要一并排除。
+- 云存档身份靠后端 Cookie，前端**不得信任或发送 uid**；`src/cloud.js` 的 FNV-1a / 用户名词库必须与 `studio/app.py` 的 `_fnv1a` / `USERNAME_ADJ` / `USERNAME_NOUN` 逐项一致，否则同一 uid 两端名字不符（Node 测试有跨端断言）。`CloudService.me()` 的 `_mePromise` 去重不能删：并发签发会让前端缓存 uid 与浏览器 Cookie 不一致。所有 `/api/cloud/*` 响应都必须带 `ok:true`，否则前端 `request()` 会判失败返回 null（曾因 leaderboard 漏该字段导致榜单恒空）。
 - `Autopilot` 的动作序列必须记录**全精度**轴值：任何舍入都会在反馈控制中逐帧累积，复杂关卡（冰面/加速带）回放会发散；改控制律后必须重跑三关 `replayTrace` 断言。
 - 演示模式（`game.demo`）不 `addPlayTime`、不采样倾角、时限耗尽不扣命；演示通关走 `finishDemo()` 而非 `clearLevel()`。玩家有效输入经 `setAxis(x, z, human=true)` 触发接管，新增输入源记得传 `human` 标记。

@@ -217,6 +217,15 @@ export class UI {
       + tips.map((t) => `<div class="ai-coach-row">${t}</div>`).join('');
   }
 
+  // 异步拿到匿名身份后，只更新菜单里那枚云入口的文字，不重绘整个菜单。
+  setCloudStatus(status = {}) {
+    const btn = document.getElementById('cloudEntry');
+    if (!btn) return;
+    const name = status.name || '我的排行';
+    btn.textContent = name ? `☁ ${name} · 排行` : '☁ 云排行榜';
+    btn.title = status.online ? '已连接云端' : '点击加载云端排行';
+  }
+
   hideOverlay() {
     this.overlayType = '';
     this.el.overlay.classList.remove('visible');
@@ -514,7 +523,7 @@ const OVERLAY_HTML = {
       </div>
       <div><h3>操作</h3>${keyTable()}</div>
     </div>
-    <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}</div>
+    <div class="modal-section-title">选择关卡 · 累计 ${d.totalStars || 0} / ${d.maxStars || 9} ★ · 生涯通关 ${d.clearCount || 0} 次 · 游玩 ${fmtCareer(d.playTime)}${d.cloud && d.cloud.enabled ? `<button type="button" id="cloudEntry" class="cloud-entry" data-action="leaderboard">☁ 云排行榜</button>` : ''}</div>
     <div class="level-picker">${levelCards(d)}</div>
     ${d.daily ? `<button class="daily-btn" data-action="daily">
       <span class="daily-tag">每日挑战 · ${d.daily.date}</span>
@@ -543,6 +552,40 @@ const OVERLAY_HTML = {
       <textarea class="ai-report" id="aiReport" rows="6" readonly>${d.report || ''}</textarea>
     </div>
     <div class="modal-btns"><button class="ghost-btn" data-action="menu">返回主菜单</button></div>`,
+
+  leaderboard: (d) => {
+    const rows = Array.isArray(d.rows) ? d.rows.slice(0, 10) : [];
+    const me = d.me;
+    const online = d.online !== false;
+    const medal = (r) => r === 1 ? '①' : r === 2 ? '②' : r === 3 ? '③' : String(r);
+    const row = (r) => `<div class="lb-row${r.me ? ' is-me' : ''}">
+      <span class="lb-rank">${medal(r.rank)}</span>
+      <span class="lb-name">${r.name}${r.me ? ' <em>你</em>' : ''}</span>
+      <span class="lb-score">${r.score.toLocaleString('zh-CN')}</span>
+      <span class="lb-stars">${'★'.repeat(Math.min(3, r.stars))}</span>
+      <span class="lb-clears">${r.clears} 通</span>
+    </div>`;
+    return `
+    <div class="modal-tag">CLOUD LEADERBOARD</div>
+    <h1>云排行榜</h1>
+    <p class="modal-lead">${online
+      ? `免注册云存档 · 你的身份是「${d.status && d.status.name || '匿名弹珠玩家'}」，由浏览器 Cookie 自动识别。每次通关后成绩自动上云。`
+      : '当前未连接云端（本地离线模式），成绩仅保存在本机。线上版本即可解锁云存档与排行榜。'}</p>
+    ${online && me ? `<div class="lb-me">
+      <span>我的排名 <b>${me.rank}</b> / ${d.total} 人</span>
+      <span>总分 <b>${me.score.toLocaleString('zh-CN')}</b></span>
+      <span>星级 <b>${me.stars}</b></span>
+      <span>通关 <b>${me.clears}</b></span>
+    </div>` : ''}
+    ${online && rows.length
+      ? `<div class="lb-head"><span>#</span><span>玩家</span><span>总分</span><span>星级</span><span>通关</span></div>
+         <div class="lb-list">${rows.map(row).join('')}</div>`
+      : `<div class="lb-empty">${online ? '榜单还是空的，成为第一个上榜的弹珠玩家吧。' : '离线模式下暂无云端榜单。'}</div>`}
+    <div class="modal-btns">
+      <button class="primary-btn" data-action="refresh-board">刷新榜单 <span>↻</span></button>
+      <button class="ghost-btn" data-action="menu">返回主菜单</button>
+    </div>`;
+  },
 
   paused: (d) => `
     <div class="modal-tag">PAUSED</div>

@@ -412,6 +412,74 @@ kbd {
 .daily-btn:hover { background: rgba(255, 180, 84, 0.16); border-color: rgba(255, 180, 84, 0.6); }
 .daily-tag { font-weight: 600; color: #ffce8a; letter-spacing: 1px; }
 .daily-sub { font-size: 11px; color: #9fb4c8; }
+
+/* 云排行榜入口：内嵌在关卡统计行右侧，float 不额外占行高。 */
+.cloud-entry {
+  float: right;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: #7fe3d0;
+  background: rgba(64, 200, 180, 0.10);
+  border: 1px solid rgba(64, 200, 180, 0.42);
+  border-radius: 8px;
+  padding: 2px 9px;
+  margin: -3px 0 0 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.cloud-entry:hover { background: rgba(64, 200, 180, 0.20); border-color: rgba(64, 200, 180, 0.7); }
+
+/* 云排行榜弹窗 */
+.lb-me {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: center;
+  padding: 8px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #cfe0ee;
+  background: rgba(64, 200, 180, 0.08);
+  border: 1px solid rgba(64, 200, 180, 0.30);
+  border-radius: 10px;
+}
+.lb-me b { color: #7fe3d0; font-size: 13px; }
+.lb-head, .lb-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 80px 56px 52px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.lb-head { color: var(--muted); font-size: 11px; letter-spacing: 1px; border-bottom: 1px solid var(--line); }
+.lb-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.lb-row { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.lb-row:last-child { border-bottom: none; }
+.lb-row.is-me { background: rgba(64, 200, 180, 0.14); }
+.lb-row.is-me .lb-name { color: #7fe3d0; }
+.lb-rank { color: #ffce8a; font-weight: 600; text-align: center; }
+.lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-name em { font-style: normal; font-size: 10px; color: #7fe3d0; border: 1px solid rgba(64,200,180,0.5); border-radius: 5px; padding: 0 4px; }
+.lb-score { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.lb-stars { color: #ffcf6a; text-align: center; letter-spacing: -1px; }
+.lb-clears { text-align: right; color: var(--muted); font-size: 11px; }
+.lb-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
 .level-card {
   font-family: inherit;
   position: relative;

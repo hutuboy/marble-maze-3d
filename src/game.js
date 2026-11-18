@@ -5,6 +5,7 @@ import { DIFFICULTIES, effectiveConfig } from './difficulty.js';
 import { AIService, localDesign, localCoach, localNarrative, localReport, sanitizeLevelInput, validateLevelInput } from './ai.js';
 import { encodeShare, decodeShare, normalizeCode } from './share.js';
 import { Autopilot } from './autopilot.js';
+import { CloudService, usernameFor } from './cloud.js';
 
 export const STATE = {
   MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', FAILING: 'failing',
@@ -65,6 +66,15 @@ export class Game {
           report: async (s) => ({ text: localReport(s), mode: 'local' }),
           mode: 'local'
         };
+    // 云存档：浏览器用 CloudService（开关由后端注入），Node 测试用离线桩。
+    this.cloud = (typeof document !== 'undefined')
+      ? new CloudService()
+      : {
+          enabled: false, online: false, uid: '', name: '', mode: 'local',
+          me: async () => null, save: async () => null,
+          leaderboard: async () => ({ rows: [], me: null, total: 0, online: false })
+        };
+    this.cloudBoard = null;    // 最近一次拉取的榜单缓存
     this.aiLevel = null;       // 当前 AI 生成关卡的 cfg（非 null 时走定制关卡）
     this.aiStory = null;       // 当前关卡叙事
     this.aiCoach = [];         // 最近一次教练建议
@@ -101,6 +111,7 @@ export class Game {
     this.loadLevel(0);
     this.ui.showOverlay('menu', this.menuData());
     this.ui.setStatus('准备开始', 'normal');
+    this.ensureCloudIdentity();
   }
 
   get cfg() {
@@ -118,6 +129,76 @@ export class Game {
     this.ui.setStatus('准备开始', 'normal');
     this.sfx.click();
     return true;
+  }
+
+  // ---- 云存档 / 排行榜（免注册，靠匿名 Cookie）----
+
+  // 菜单用：本环境是否提供云能力、当前身份名。本地双击恒为不可用。
+  cloudStatus() {
+    return {
+      enabled: !!this.cloud.enabled,
+      online: !!this.cloud.online,
+      name: this.cloud.name || (this.cloud.uid ? usernameFor(this.cloud.uid) : '')
+    };
+  }
+
+  // 静默建立匿名身份（后端 Set-Cookie），拿到名字后只更新菜单入口文字。
+  // 构造与返回菜单时各调用一次；幂等：已有 uid 直接跳过。
+  ensureCloudIdentity() {
+    if (!this.cloud.enabled || this.cloud.uid || typeof this.cloud.me !== 'function') return;
+    this.cloud.me().then(() => {
+      if (this.state === STATE.MENU && this.ui.overlayType === 'menu') {
+        this.ui.setCloudStatus(this.cloudStatus());
+      }
+    }).catch(() => {});
+  }
+
+  // 建立一个匿名身份并拉取榜单。进入菜单 / 首次点排行榜时调用，失败静默。
+  async refreshCloud() {
+    if (!this.cloud.enabled) return false;
+    if (!this.cloud.uid && typeof this.cloud.me === 'function') await this.cloud.me();
+    if (typeof this.cloud.leaderboard === 'function') {
+      this.cloudBoard = await this.cloud.leaderboard();
+    }
+    return !!this.cloud.uid;
+  }
+
+  // 打开排行榜弹窗：先确保有身份与榜单，再渲染；异步返回后可二次刷新。
+  async showLeaderboard() {
+    await this.refreshCloud();
+    this.ui.showOverlay('leaderboard', this.leaderboardData());
+    return this.cloudBoard;
+  }
+
+  leaderboardData() {
+    const board = this.cloudBoard || { rows: [], me: null, total: 0, online: false };
+    return { ...board, status: this.cloudStatus() };
+  }
+
+  // 通关后把主线成绩上传云端。演示 / 自定义 / 每日挑战不写云榜，
+  // 与「自定义关卡不写主线成绩」的隔离口径一致；失败完全静默。
+  syncCloud() {
+    if (!this.cloud.enabled || this.cfgOverride || this.demo || this.cfg.daily) return;
+    const best = {};
+    for (const c of LEVELS) {
+      const b = this.records.best(c.id, 'standard');
+      if (b) best[String(c.id)] = { time: b.time, score: b.score, stars: b.stars };
+    }
+    const snapshot = {
+      best,
+      clears: this.records.clearCount,
+      stars: this.records.totalStars,
+      playTime: this.records.playTime
+    };
+    // 先确保身份落地再 save：否则首次通关时 save 可能抢在 me() 的 Set-Cookie
+    // 之前发出，导致后端签发第二个 uid。me() 内部已去重，这里直接复用。
+    (async () => {
+      try {
+        if (!this.cloud.uid && typeof this.cloud.me === 'function') await this.cloud.me();
+        const r = await this.cloud.save(snapshot);
+        if (r && r.name) this.cloud.name = r.name;
+      } catch (_) { /* 云失败静默，不影响结算 */ }
+    })();
   }
 
   menuData() {
@@ -141,7 +222,8 @@ export class Game {
       daily: (() => {
         const dc = dailyConfig();
         return { date: dc.daily, name: dc.name, best: this.records.dailyBest(dc.daily) };
-      })()
+      })(),
+      cloud: this.cloudStatus()
     };
   }
 
@@ -726,6 +808,7 @@ export class Game {
     this.ui.showOverlay('menu', this.menuData());
     this.ui.setStatus('准备开始', 'normal');
     this.sfx.click();
+    this.ensureCloudIdentity();
   }
 
   beginFall(reason) {
@@ -789,6 +872,8 @@ export class Game {
       time: this.elapsed, score: this.lastLevelScore, stars
     }) : null;
     this.flushStats();
+    // 主线通关后异步上传云存档（失败静默，不阻塞结算弹窗）。
+    this.syncCloud();
     this.lastStars = stars;
     this.lastRecord = rec;
     this.view.burstGoal();

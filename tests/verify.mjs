@@ -10,6 +10,7 @@ import { DIFFICULTIES, DIFFICULTY_ORDER, effectiveConfig, cycleDifficulty } from
 import { Game, dailyConfig } from '../src/game.js';
 import { encodeShare, decodeShare, normalizeCode } from '../src/share.js';
 import { Autopilot, replayTrace } from '../src/autopilot.js';
+import { fnHash, usernameFor, cleanSave, cleanBoard, CloudService } from '../src/cloud.js';
 
 let passed = 0;
 let failed = 0;
@@ -321,8 +322,10 @@ console.log('AI 关卡分享码');
     /^[A-Za-z0-9_-]+$/.test(code) && code.length < 400, `${code.length} 字符`);
   check('分享码保留可读的关卡名与提示',
     back.ok && back.cfg.name === cfg.name && back.cfg.tip === cfg.tip);
+  // 篡改字符必须与原末字符不同：原码末位恰为 'A' 时拼 'A' 等于没改，会偶发假失败
+  const tampered = code.slice(0, -1) + (code.endsWith('A') ? 'B' : 'A');
   check('被截断或篡改的分享码会被拒绝',
-    !decodeShare(code.slice(0, -3)).ok && !decodeShare(code.slice(0, -1) + 'A').ok
+    !decodeShare(code.slice(0, -3)).ok && !decodeShare(tampered).ok
     && !decodeShare('').ok && !decodeShare('short').ok);
   check('分享码兼容地址栏、查询串与纯码三种形态',
     normalizeCode(`https://example.com/game#l=${code}`) === code
@@ -777,6 +780,103 @@ console.log('每日挑战');
     && g.records.unlocked === unlockedBefore
     && g.records.clearCount === clearsBefore + 1);
   delete globalThis.localStorage;
+}
+console.log('');
+
+// ---- 云存档 / 排行榜（免注册）----
+console.log('云存档 / 排行榜');
+check('FNV-1a 哈希稳定且需与后端逐位一致',
+  fnHash('u_38dadcf436f461b1edbf') === (() => {
+    let h = 2166136261;
+    for (const ch of 'u_38dadcf436f461b1edbf') { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
+  })());
+check('用户名由 uid 稳定派生且与 Python 后端一致',
+  usernameFor('u_38dadcf436f461b1edbf') === '流星摩羯20'
+  && usernameFor('u_3cc57d36fed7c593a071') === '流星游隼44');
+check('同一 uid 恒得同一名字、不同 uid 名字有别',
+  usernameFor('u_abc12345') === usernameFor('u_abc12345')
+  && usernameFor('u_abc12345') !== usernameFor('u_abc12346'));
+
+const cs = cleanSave({
+  best: {
+    1: { time: 45, score: 3200, stars: 3 },
+    2: { time: 88, score: 2100, stars: 2 },
+    999: { time: 1, score: 1e12, stars: 3 },
+    8000: { score: 777 }
+  },
+  clears: 12, stars: 99, playTime: 3600, evil: '<script>'
+});
+check('云存档清洗只保留主线三关 id',
+  Object.keys(cs.best).sort().join(',') === '1,2');
+check('云存档清洗钳制越界数值、丢弃非白名单字段',
+  cs.stars === 99 && cs.clears === 12 && cs.playTime === 3600
+  && !('evil' in cs) && cs.best[1].score === 3200);
+const csDirty = cleanSave({ best: { 1: { time: -5, score: -1, stars: 9 } }, clears: -3, playTime: 1e12 });
+check('云存档清洗：负数/超大值归一到合法区间',
+  csDirty.best[1].time === 0 && csDirty.best[1].score === 0
+  && csDirty.best[1].stars === 3 && csDirty.clears === 0 && csDirty.playTime <= 1e8);
+
+const cb = cleanBoard({
+  rows: [
+    { uid: 'a', name: '甲', score: 5300, stars: 5, clears: 12, rank: 1, me: true },
+    { uid: 'b', name: '乙', score: 'bad', stars: 2, clears: 3, rank: 2 },
+    null
+  ],
+  me: { uid: 'a', name: '甲', score: 5300, stars: 5, clears: 12, rank: 1, me: true },
+  total: 2, online: true
+});
+check('榜单二次防御：脏分值归零、空行不崩、自身标记保留',
+  cb.rows.length === 2 && cb.rows[1].score === 0 && cb.rows[0].me === true
+  && cb.me.rank === 1 && cb.online === true);
+check('榜单非对象输入安全降级为空',
+  cleanBoard(null).rows.length === 0 && cleanBoard(null).online === false);
+
+// 未启用时（本地 file:// / HTTP）零请求，静默返回 null。
+const offlineCloud = new CloudService({ enabled: false, fetch: async () => { throw new Error('不该发请求'); } });
+check('云服务未启用时 me/save/leaderboard 零请求且静默降级',
+  await offlineCloud.me() === null
+  && await offlineCloud.save({}) === null
+  && offlineCloud.leaderboard !== undefined
+  && offlineCloud.online === false && offlineCloud.mode === 'local');
+
+// 注入 mock fetch 验证请求路径、Cookie 凭据与身份缓存。
+const calls = [];
+const mockFetch = async (url, opts) => {
+  calls.push({ url, method: opts.method, credentials: opts.credentials });
+  if (url.endsWith('/me')) return { ok: true, json: async () => ({ ok: true, uid: 'u_mock12345', name: '测试玩家' }) };
+  if (url.endsWith('/save')) return { ok: true, json: async () => ({ ok: true, uid: 'u_mock12345', name: '测试玩家' }) };
+  return { ok: false };
+};
+const onlineCloud = new CloudService({ enabled: true, fetch: mockFetch, base: '/api/cloud' });
+await onlineCloud.me();
+await onlineCloud.save({ best: { 1: { time: 10, score: 100, stars: 3 } } });
+check('云服务按约定路径请求并携带同源 Cookie',
+  calls.length === 2 && calls[0].url === '/api/cloud/me'
+  && calls[1].url === '/api/cloud/save' && calls[1].method === 'POST'
+  && calls.every((c) => c.credentials === 'same-origin'));
+check('云服务缓存后端返回的身份与在线状态',
+  onlineCloud.uid === 'u_mock12345' && onlineCloud.name === '测试玩家'
+  && onlineCloud.online === true && onlineCloud.mode === 'cloud');
+
+// Game 离线桩：云状态禁用、榜单拉取无副作用。
+{
+  const noop = () => {};
+  const stubView = { buildLevel: noop, setGemsVisible: noop, setCheckpointsActive: noop, burstGoal: noop };
+  const stubUi = {
+    showOverlay: noop, hideOverlay: noop, setStatus: noop, setTip: noop, setPauseLabel: noop,
+    clearTrail: noop, flashLevel: noop, setStats: noop, toast: noop, setCloudStatus: noop,
+    setAICoach: noop, setLiveCoach: noop, setDemoVisible: noop
+  };
+  const stubSfx = { click: noop, win: noop, clearAll: noop, fail: noop, bump: noop, fall: noop };
+  const g2 = new Game(stubView, stubUi, stubSfx);
+  check('Game 云桩：本地环境禁用且菜单带云状态字段',
+    g2.cloud.enabled === false && g2.menuData().cloud.enabled === false
+    && g2.cloudStatus().enabled === false);
+  await g2.refreshCloud();
+  g2.syncCloud();
+  check('Game 云桩：refreshCloud/syncCloud 无副作用',
+    g2.cloudBoard === null && g2.cloud.online === false);
 }
 console.log('');
 

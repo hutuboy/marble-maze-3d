@@ -69,3 +69,10 @@
 - **无障碍**：overlay 是 `role=dialog aria-modal`，状态与 toast 是 `aria-live=polite`，canvas 有 `role=img`；`prefers-reduced-motion` 下必须关掉闪白与震屏（对应浏览器断言）。
 - **CI**（`.github/workflows/ci.yml`）：除测试外还校验「bundle == 源码构建」「studio 静态件 == 根目录」「产物无 token」。主仓库 `.gitattributes` 是 `* text=auto eol=lf`，构建产物跨平台一致；改了静态件必须同步 `studio/`，否则 CI 红。
 - 本机 `Write`/`Edit` 对长中文段落偶发匹配失败，改 `src/` 里的中文模板时用小锚点或 python 脚本替换更稳。
+
+## v1.5 云存档 / 排行榜约束（2026-11-18）
+- **免注册身份**：后端签发匿名 HttpOnly Cookie `mm_uid`，用户名由 uid 经 FNV-1a 派生（不存名字表、不收集个人信息）。`src/cloud.js` 的 `fnHash`/用户名词库必须与 `studio/app.py` 的 `_fnv1a`/`USERNAME_ADJ`/`USERNAME_NOUN` 逐项一致，Node 测试有跨端断言守着。
+- **三个线上专属坑（本地测试测不出）**：① `ensureCloudIdentity()` 必须在**构造 + toMenu** 都调用（构造不走 toMenu）；② `CloudService.me()` 的 `_mePromise` 去重**不能删**，否则并发签发两个 uid、前端缓存与 Cookie 不符；③ 所有 `/api/cloud/*` 响应**必须带 `ok:true`**，因 `request()` 统一要求该字段，漏了会恒判失败返回空榜单。
+- **云存储**：`/mnt/workspace/marble-cloud/leaderboard.json`（`CLOUD_FILE` env 可覆盖），原子写 + `_cloud_lock`，逐字段取历史最优防回退，白名单字段+数值钳制。注入开关 `inject_config`（旧的 `inject_ai` 保留为别名）；本地 serve.mjs/file:// 不注入 → 前端零请求，这是硬约束。
+- **隔离口径**：`Game.syncCloud()` 与自定义关卡一致，跳过 custom/每日/演示，只传主线三关标准档最佳。云入口用 `float:right` 内嵌菜单统计行，本地不渲染，不占弹窗高度预算。
+- **验证**：`npm test` 157、`npm run test:browser` 106；线上端到端另跑 `tools/cloud-e2e.mjs`（先起 `studio/app.py` @7901）7 项——**改云功能必须跑它**，本地全绿不代表线上没问题。
